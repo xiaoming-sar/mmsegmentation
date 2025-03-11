@@ -39,7 +39,37 @@ def cross_entropy(pred,
             only averaged over non-ignored targets. Default: False.
             `New in version 0.23.0.`
     """
+    #==============debug================
+    # import pickle
+    # import os
+    # debug_dir = "/cluster/home/snf52395/mmsegmentation/data/debug_pickles"
+    # # Create debug directory
+    # if not os.path.exists(debug_dir):
+    #     os.makedirs(debug_dir)
+    
+    # # Load variables
+    # with open(os.path.join(debug_dir, "pred.pkl"), "wb") as f:
+    #     pickle.dump(pred, f)
+    # with open(os.path.join(debug_dir, "label.pkl"), "wb") as f:
+    #     pickle.dump(label, f)
+    # with open(os.path.join(debug_dir, "class_weight.pkl"), "wb") as f:
+    #     pickle.dump(class_weight, f)
+    # with open(os.path.join(debug_dir, "weight.pkl"), "wb") as f:
+    #     pickle.dump(weight, f)
+    # with open(os.path.join(debug_dir, "reduction.pkl"), "wb") as f:
+    #     pickle.dump(reduction, f)
+    # with open(os.path.join(debug_dir, "ignore_index.pkl"), "wb") as f:
+    #     pickle.dump(ignore_index, f)
 
+    # # Inspect variables
+    # print("pred shape:", pred.shape, "dtype:", pred.dtype)
+    # print("label shape:", label.shape, "dtype:", label.dtype)
+    # print("class_weight:", class_weight, "type:", type(class_weight))
+    # print("weight:", weight, "type:", type(weight))
+    # print("reduction:", reduction)
+    # print("ignore_index:", ignore_index)
+
+    #==============debug end ================
     # class_weight is a manual rescaling weight given to each class.
     # If given, has to be a Tensor of size C element-wise losses
     loss = F.cross_entropy(
@@ -61,14 +91,14 @@ def cross_entropy(pred,
             else:
                 avg_factor = label.numel()
 
-        else:
-            # the average factor should take the class weights into account
-            label_weights = torch.stack([class_weight[cls] for cls in label
-                                         ]).to(device=class_weight.device)
+        # else:
+        #     # the average factor should take the class weights into account
+        #     label_weights = torch.stack([class_weight[cls] for cls in label
+        #                                  ]).to(device=class_weight.device)
 
-            if avg_non_ignore:
-                label_weights[label == ignore_index] = 0
-            avg_factor = label_weights.sum()
+        #     if avg_non_ignore:
+        #         label_weights[label == ignore_index] = 0
+        #     avg_factor = label_weights.sum()
 
     if weight is not None:
         weight = weight.float()
