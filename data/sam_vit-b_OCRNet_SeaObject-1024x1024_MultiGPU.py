@@ -1,5 +1,4 @@
 checkpoint_path = 'https://download.openmmlab.com/mmclassification/v1/vit_sam/vit-base-p16_sam-pre_3rdparty_sa1b-1024px_20230411-2320f9cc.pth'
-norm_cfg = dict(type='SyncBN', requires_grad=True)
 crop_size = (
     1024,
     1024,
@@ -30,8 +29,8 @@ data_preprocessor = dict(
 data_root = '/cluster/projects/nn10004k/ml_SeaObject_Data/OASIs_dataset_patch1024/TYPE2'
 dataset_type = 'SeaObjectDataset'
 default_hooks = dict(
-    checkpoint=dict(by_epoch=False, interval=50, type='CheckpointHook'),
-    logger=dict(interval=1, log_metric_by_epoch=False, type='LoggerHook'),
+    checkpoint=dict(by_epoch=False, interval=5000, type='CheckpointHook'),
+    logger=dict(interval=50, log_metric_by_epoch=False, type='LoggerHook'),
     param_scheduler=dict(type='ParamSchedulerHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),
     timer=dict(type='IterTimerHook'),
@@ -53,76 +52,86 @@ load_from = None
 log_level = 'INFO'
 log_processor = dict(by_epoch=False)
 model = dict(
-    type='CascadeEncoderDecoder',
-    num_stages=2,
     backbone=dict(
-        type='ViTSAM',
-        arch = 'base',
+        arch='base',
         img_size=1024,
         init_cfg=dict(
             checkpoint=
             'https://download.openmmlab.com/mmclassification/v1/vit_sam/vit-base-p16_sam-pre_3rdparty_sa1b-1024px_20230411-2320f9cc.pth',
             prefix='backbone',
             type='Pretrained'),
-        out_channels=-1, # not channel reduction and all 768 channel will be reserved for decoder
-        out_indices=[2, 5, 8, 11],
+        out_channels=-1,
+        out_indices=[
+            2,
+            5,
+            8,
+            11,
+        ],
         patch_size=16,
+        type='ViTSAM',
         use_abs_pos=True,
         use_rel_pos=True,
         window_size=14),
-
-     decode_head=[
+    decode_head=[
         dict(
-            type='FCNHead',
-            in_channels=768, # from 1024 to 256
-            in_index=2,
+            align_corners=False,
             channels=256,
-            num_convs=1,
             concat_input=False,
             dropout_ratio=0.1,
-            num_classes=4,
-            norm_cfg=norm_cfg,
-            align_corners=False,
+            in_channels=768,
+            in_index=2,
             loss_decode=dict(
-                type='FocalLoss', use_sigmoid=True, gamma=2.0, alpha=0.5,
-                reduction='mean',class_weight=None)), # class_weight=[2.5, 1.923, 25.0, 25.0]
+                alpha=0.5,
+                class_weight=None,
+                gamma=2.0,
+                reduction='mean',
+                type='FocalLoss',
+                use_sigmoid=True),
+            norm_cfg=dict(requires_grad=True, type='SyncBN'),
+            num_classes=4,
+            num_convs=1,
+            type='FCNHead'),
         dict(
-            type='OCRHead',
-            in_channels=768, # from 1024 to 768
-            in_index=3,
-            channels=512,
-            ocr_channels=256,
-            dropout_ratio=0.1,
-            num_classes=4,
-            norm_cfg=norm_cfg,
             align_corners=False,
+            channels=512,
+            dropout_ratio=0.1,
+            in_channels=768,
+            in_index=3,
             loss_decode=dict(
-                 type='FocalLoss', use_sigmoid=True, gamma=2.0, alpha=0.5,
-                reduction='mean', class_weight=None))
-              ],
-
+                alpha=0.5,
+                class_weight=None,
+                gamma=2.0,
+                reduction='mean',
+                type='FocalLoss',
+                use_sigmoid=True),
+            norm_cfg=dict(requires_grad=True, type='SyncBN'),
+            num_classes=4,
+            ocr_channels=256,
+            type='OCRHead'),
+    ],
+    num_stages=2,
     test_cfg=dict(mode='whole'),
     train_cfg=dict(),
-    )
-
+    type='CascadeEncoderDecoder')
+norm_cfg = dict(requires_grad=True, type='SyncBN')
 optim_wrapper = dict(
-    type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=0.0005, weight_decay=0.05),
-    clip_grad=dict(max_norm=1, norm_type=2))
-
+    clip_grad=dict(max_norm=1, norm_type=2),
+    optimizer=dict(lr=0.0005, type='AdamW', weight_decay=0.05),
+    type='OptimWrapper')
 param_scheduler = [
     dict(
-        type='LinearLR', start_factor=0.001, by_epoch=False, begin=0,
-        end=1000),
+        begin=0, by_epoch=False, end=1000, start_factor=0.001,
+        type='LinearLR'),
     dict(
-        type='MultiStepLR',
         begin=1000,
-        end=80000,
         by_epoch=False,
-        milestones=[60000, 72000],
-    )
+        end=80000,
+        milestones=[
+            60000,
+            72000,
+        ],
+        type='MultiStepLR'),
 ]
-
 randomness = dict(seed=0)
 resume = False
 test_cfg = dict(type='TestLoop')
@@ -159,7 +168,7 @@ test_pipeline = [
     dict(type='LoadAnnotations'),
     dict(type='PackSegInputs'),
 ]
-train_cfg = dict(max_iters=300, type='IterBasedTrainLoop', val_interval=50)
+train_cfg = dict(max_iters=10000, type='IterBasedTrainLoop', val_interval=100)
 train_dataloader = dict(
     batch_size=1,
     dataset=dict(
@@ -279,3 +288,4 @@ visualizer = dict(
         dict(type='LocalVisBackend'),
     ])
 work_dir = '/cluster/projects/nn10004k/packages_install/seaobject'
+
