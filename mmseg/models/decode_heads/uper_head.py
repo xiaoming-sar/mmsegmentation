@@ -94,14 +94,17 @@ class UPerHead(BaseDecodeHead):
             feats (Tensor): A tensor of shape (batch_size, self.channels,
                 H, W) which is feature map for last layer of decoder head.
         """
+        # the inputs with shape of [B, C, H, W], torch.Size([1, 768, 64, 64])
         inputs = self._transform_inputs(inputs)
-
+        # print(f'inputs after transform: {inputs[0].shape}')
+        # inputs after transform: torch.Size([1, 768, 64, 64])
         # build laterals
         laterals = [
             lateral_conv(inputs[i])
             for i, lateral_conv in enumerate(self.lateral_convs)
         ]
-
+        # print('Shape of laterals:', [lat.shape for lat in laterals])
+        # Shape of laterals: [torch.Size([1, 512, 64, 64]), torch.Size([1, 512, 64, 64]), torch.Size([1, 512, 64, 64])]
         laterals.append(self.psp_forward(inputs))
 
         # build top-down path

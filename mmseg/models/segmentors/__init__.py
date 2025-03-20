@@ -5,8 +5,8 @@ from .depth_estimator import DepthEstimator
 from .encoder_decoder import EncoderDecoder
 from .multimodal_encoder_decoder import MultimodalEncoderDecoder
 from .seg_tta import SegTTAModel
-
+from .sam import SAM
 __all__ = [
     'BaseSegmentor', 'EncoderDecoder', 'CascadeEncoderDecoder', 'SegTTAModel',
-    'MultimodalEncoderDecoder', 'DepthEstimator'
+    'MultimodalEncoderDecoder', 'DepthEstimator','SAM'
 ]
