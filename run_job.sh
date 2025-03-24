@@ -23,5 +23,5 @@ module load  CUDA/12.1.1
 
 # export PYTHONPATH="$(dirname $0)/..":$PYTHONPATH
 srun python -u tools/train.py data/sam_vit-b_OCRNet_SeaObject-1024x1024_MultiGPU.py  \
-    --work-dir /cluster/projects/nn10004k/packages_install/seaobject_ocrnet5000  \
+    --work-dir /cluster/projects/nn10004k/packages_install/seaobject_ocrnet80000  \
     --launcher=slurm

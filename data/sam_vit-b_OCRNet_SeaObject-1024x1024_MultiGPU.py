@@ -116,7 +116,7 @@ model = dict(
 norm_cfg = dict(requires_grad=True, type='SyncBN')
 optim_wrapper = dict(
     clip_grad=dict(max_norm=1, norm_type=2),
-    optimizer=dict(lr=0.0005, type='AdamW', weight_decay=0.05),
+    optimizer=dict(lr=0.0001, type='AdamW', weight_decay=0.0005),
     type='OptimWrapper')
 param_scheduler = [
     dict(
