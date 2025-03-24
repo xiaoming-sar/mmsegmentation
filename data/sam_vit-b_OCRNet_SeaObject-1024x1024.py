@@ -107,7 +107,7 @@ model = dict(
 
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=0.0005, weight_decay=0.05),
+    optimizer=dict(type='AdamW', lr=0.0001, weight_decay=0.0005),
     clip_grad=dict(max_norm=1, norm_type=2))
 
 param_scheduler = [
@@ -120,6 +120,7 @@ param_scheduler = [
         end=80000,
         by_epoch=False,
         milestones=[60000, 72000],
+        by_epoch=False,
     )
 ]
 

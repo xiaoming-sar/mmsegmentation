@@ -157,7 +157,7 @@ test_dataloader = dict(
     sampler=dict(shuffle=False, type='DefaultSampler'))
 test_evaluator = dict(
     iou_metrics=[
-        'mIoU',
+        'mIoU', 'mDice', 'mFscore',
     ], type='IoUMetric')
 test_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -168,7 +168,7 @@ test_pipeline = [
     dict(type='LoadAnnotations'),
     dict(type='PackSegInputs'),
 ]
-train_cfg = dict(max_iters=10000, type='IterBasedTrainLoop', val_interval=100)
+train_cfg = dict(max_iters=80000, type='IterBasedTrainLoop', val_interval=200)
 train_dataloader = dict(
     batch_size=1,
     dataset=dict(
@@ -276,7 +276,7 @@ val_dataloader = dict(
     sampler=dict(shuffle=False, type='DefaultSampler'))
 val_evaluator = dict(
     iou_metrics=[
-        'mIoU',
+        'mIoU', 'mDice', 'mFscore',
     ], type='IoUMetric')
 vis_backends = [
     dict(type='LocalVisBackend'),
@@ -288,4 +288,3 @@ visualizer = dict(
         dict(type='LocalVisBackend'),
     ])
 work_dir = '/cluster/projects/nn10004k/packages_install/seaobject'
-
