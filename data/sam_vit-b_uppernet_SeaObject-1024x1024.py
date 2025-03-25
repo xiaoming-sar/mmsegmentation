@@ -84,7 +84,7 @@ model = dict(
             gamma=2.0,
             alpha=0.5,
             reduction='mean',
-            class_weight=[2.5, 1.923, 25.0, 25.0])
+            class_weight=None) # remove the class weight, might be better[2.5, 1.923, 25.0, 25.0]
             ),
 
     test_cfg=dict(mode='whole'),

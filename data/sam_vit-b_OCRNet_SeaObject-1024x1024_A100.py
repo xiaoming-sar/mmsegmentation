@@ -4,7 +4,7 @@ crop_size = (
     1024,
 )
 data_preprocessor = dict(
-    bgr_to_rgb=True,
+    bgr_to_rgb=True, #convert bgr to rgb for image segmentation
     mean=[
         123.675,
         116.28,
@@ -139,7 +139,7 @@ randomness = dict(seed=0)
 resume = False
 test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
-    batch_size=7,
+    batch_size=1,
     dataset=dict(
         ann_file='splits/val.txt',
         data_prefix=dict(img_path='image', seg_map_path='mask'),
@@ -151,6 +151,10 @@ test_dataloader = dict(
                 1024,
                 1024,
             ), type='Resize'),
+            dict(crop_size=(
+                    1024,
+                    1024,
+                ), type='RandomCrop'),
             dict(type='LoadAnnotations'),
             dict(type='PackSegInputs'),
         ],
@@ -258,7 +262,7 @@ tta_pipeline = [
 ]
 val_cfg = dict(type='ValLoop')
 val_dataloader = dict(
-    batch_size=7,
+    batch_size=1,
     dataset=dict(
         ann_file='splits/val.txt',
         data_prefix=dict(img_path='image', seg_map_path='mask'),
@@ -270,6 +274,10 @@ val_dataloader = dict(
                 1024,
                 1024,
             ), type='Resize'),
+            dict(crop_size=(
+                    1024,
+                    1024,
+                ), type='RandomCrop'),
             dict(type='LoadAnnotations'),
             dict(type='PackSegInputs'),
         ],
