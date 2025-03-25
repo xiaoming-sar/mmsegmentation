@@ -139,7 +139,7 @@ randomness = dict(seed=0)
 resume = False
 test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
-    batch_size=1,
+    batch_size=7,
     dataset=dict(
         ann_file='splits/val.txt',
         data_prefix=dict(img_path='image', seg_map_path='mask'),
@@ -155,7 +155,7 @@ test_dataloader = dict(
             dict(type='PackSegInputs'),
         ],
         type='SeaObjectDataset'),
-    num_workers=4,
+    num_workers=7,
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 test_evaluator = dict(
@@ -173,7 +173,7 @@ test_pipeline = [
 ]
 train_cfg = dict(max_iters=80000, type='IterBasedTrainLoop', val_interval=200)
 train_dataloader = dict(
-    batch_size=1,
+    batch_size=7,
     dataset=dict(
         ann_file='splits/train.txt',
         data_prefix=dict(img_path='image', seg_map_path='mask'),
@@ -205,7 +205,7 @@ train_dataloader = dict(
             dict(type='PackSegInputs'),
         ],
         type='SeaObjectDataset'),
-    num_workers=4,
+    num_workers=7,
     persistent_workers=True,
     sampler=dict(shuffle=True, type='InfiniteSampler'))
 train_pipeline = [
@@ -258,7 +258,7 @@ tta_pipeline = [
 ]
 val_cfg = dict(type='ValLoop')
 val_dataloader = dict(
-    batch_size=1,
+    batch_size=7,
     dataset=dict(
         ann_file='splits/val.txt',
         data_prefix=dict(img_path='image', seg_map_path='mask'),
@@ -274,7 +274,7 @@ val_dataloader = dict(
             dict(type='PackSegInputs'),
         ],
         type='SeaObjectDataset'),
-    num_workers=4,
+    num_workers=7,
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 val_evaluator = dict(
