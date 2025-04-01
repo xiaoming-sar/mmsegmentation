@@ -6,6 +6,7 @@ from .cgnet import CGNet
 from .ddrnet import DDRNet
 from .erfnet import ERFNet
 from .fast_scnn import FastSCNN
+from .hiera_sam2 import HieraSAM2
 from .hrnet import HRNet
 from .icnet import ICNet
 from .mae import MAE
@@ -23,6 +24,7 @@ from .timm_backbone import TIMMBackbone
 from .twins import PCPVT, SVT
 from .unet import UNet
 from .vit import VisionTransformer
+from .vit_sam import ViTSAM
 from .vpd import VPD
 
 __all__ = [
@@ -31,5 +33,5 @@ __all__ = [
     'VisionTransformer', 'SwinTransformer', 'MixVisionTransformer',
     'BiSeNetV1', 'BiSeNetV2', 'ICNet', 'TIMMBackbone', 'ERFNet', 'PCPVT',
     'SVT', 'STDCNet', 'STDCContextPathNet', 'BEiT', 'MAE', 'PIDNet', 'MSCAN',
-    'DDRNet', 'VPD'
+    'DDRNet', 'VPD', 'ViTSAM', 'HieraSAM2'
 ]
