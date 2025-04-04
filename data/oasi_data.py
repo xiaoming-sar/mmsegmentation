@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 def main():
     data_root = '/cluster/projects/nn10004k/ml_SeaObject_Data/OASIs_dataset_patch1024/TYPE2'
     mmseg_code_root = '/cluster/home/snf52395/mmsegmentation/configs'
-    work_dir = '/cluster/projects/nn10004k/packages_install/seaobject'
+    work_dir = '/cluster/projects/nn10004k/packages_install/sam2_test'
     # checkpoint_dir = '/cluster/projects/nn10004k/packages_install/test_data'
 
 
@@ -46,7 +46,7 @@ def main():
     ann_dir = 'mask'
 
 
-    classes = ('Sky', 'Sea', 'Land', 'SeaObj')
+    # classes = ('Sky', 'Sea', 'Land', 'SeaObj')
     # palette = [[0, 0, 0], [50, 50, 50], [100, 100, 100], [150, 150, 150]]
     # import os
     # from PIL import Image
@@ -91,86 +91,86 @@ def main():
     #   f.writelines(line + '\n' for line in filename_list[train_length:])
 
     # define dataset
-    @DATASETS.register_module()
-    class SeaObjectDataset(BaseSegDataset):
-        METAINFO = dict(classes = classes)
-        def __init__(self, **kwargs):
-            super().__init__(img_suffix='.png', seg_map_suffix='_.png',
-                             reduce_zero_label=False, **kwargs)
+    # @DATASETS.register_module()
+    # class SeaObjectDataset(BaseSegDataset):
+    #     METAINFO = dict(classes = classes)
+    #     def __init__(self, **kwargs):
+    #         super().__init__(img_suffix='.png', seg_map_suffix='_.png',
+    #                          reduce_zero_label=False, **kwargs)
 
-    test_dataset = DATASETS.build(dict(
-        type='SeaObjectDataset',
-        data_root=data_root,
-        data_prefix=dict(img_path='image', seg_map_path='mask'),
-        # Add other required parameters
-    ))
+    # test_dataset = DATASETS.build(dict(
+    #     type='SeaObjectDataset',
+    #     data_root=data_root,
+    #     data_prefix=dict(img_path='image', seg_map_path='mask'),
+    #     # Add other required parameters
+    # ))
     # cfg = Config.fromfile(osp.join(mmseg_code_root, 'bisenetv1/bisenetv1_r50-d32_4xb4-160k_cityscapes-1024x1024.py'))
-    cfg = Config.fromfile('/cluster/home/snf52395/mmsegmentation/data/bisenetv1_r50-d32_4xb4-160k_cityscapes-1024x1024.py')
+    cfg = Config.fromfile('/cluster/home/snf52395/mmsegmentation/data/hiera-sam2-baseplus_OCRNet_SeaObject-1024x1024.py')
     # print(f'Config:\n{cfg.pretty_text}')
 
     cfg.norm_cfg = dict(type='BN', requires_grad=True)
     cfg.crop_size = (1024, 1024)
-    cfg.model.data_preprocessor.size = cfg.crop_size
+    # cfg.model.data_preprocessor.size = cfg.crop_size
     # cfg.model.backbone.norm_cfg = cfg.norm_cfg
     # cfg.model.decode_head.norm_cfg = cfg.norm_cfg
     # cfg.model.auxiliary_head.norm_cfg = cfg.norm_cfg
     # modify num classes of the model in decode/auxiliary head
-    cfg.model.decode_head.num_classes = 4
+    # cfg.model.decode_head.num_classes = 4
     # cfg.model.auxiliary_head.num_classes = 4
-    cfg.model.decode_head.loss_decode.class_weight = [2.5, 1.923, 25.0, 25.0] 
+    # cfg.model.decode_head.loss_decode.class_weight = [2.5, 1.923, 25.0, 25.0] 
 
     # Modify dataset type and path
     cfg.dataset_type = 'SeaObjectDataset'
     cfg.data_root = data_root
 
-    cfg.train_dataloader.batch_size = 3 # 15 for a100
+    cfg.train_dataloader.batch_size = 2 # 15 for a100
 
-    cfg.train_pipeline = [
-        dict(type='LoadImageFromFile'),
-        dict(type='LoadAnnotations'),
-        dict(keep_ratio=True, ratio_range=(0.5, 2.0,),
-            scale=(2048, 1024), type='RandomResize'),
-        dict(cat_max_ratio=0.75, crop_size=(1024,1024), type='RandomCrop'),
-        dict(prob=0.5, type='RandomFlip'),
-        dict(type='PhotoMetricDistortion'),
-        dict(type='PackSegInputs')
-        ]
+    # cfg.train_pipeline = [
+    #     dict(type='LoadImageFromFile'),
+    #     dict(type='LoadAnnotations'),
+    #     dict(keep_ratio=True, ratio_range=(0.5, 2.0,),
+    #         scale=(2048, 1024), type='RandomResize'),
+    #     dict(cat_max_ratio=0.75, crop_size=(1024,1024), type='RandomCrop'),
+    #     dict(prob=0.5, type='RandomFlip'),
+    #     dict(type='PhotoMetricDistortion'),
+    #     dict(type='PackSegInputs')
+    #     ]
 
-    cfg.test_pipeline = [
-        dict(type='LoadImageFromFile'),
-        dict(keep_ratio=True, scale=( 1024, 1024), type='Resize'),
-        dict(type='LoadAnnotations'),
-        dict(type='PackSegInputs')
-    ]
+    # cfg.test_pipeline = [
+    #     dict(type='LoadImageFromFile'),
+    #     dict(keep_ratio=True, scale=( 1024, 1024), type='Resize'),
+    #     dict(type='LoadAnnotations'),
+    #     dict(type='PackSegInputs')
+    # ]
 
  
-    cfg.train_dataloader.dataset.type = cfg.dataset_type
-    cfg.train_dataloader.dataset.data_root = cfg.data_root
-    cfg.train_dataloader.dataset.data_prefix = dict(img_path=img_dir, seg_map_path=ann_dir)
-    cfg.train_dataloader.dataset.pipeline = cfg.train_pipeline
-    cfg.train_dataloader.dataset.ann_file = 'splits/train.txt'
+    # cfg.train_dataloader.dataset.type = cfg.dataset_type
+    # cfg.train_dataloader.dataset.data_root = cfg.data_root
+    # cfg.train_dataloader.dataset.data_prefix = dict(img_path=img_dir, seg_map_path=ann_dir)
+    # cfg.train_dataloader.dataset.pipeline = cfg.train_pipeline
+    # cfg.train_dataloader.dataset.ann_file = 'splits/train.txt'
 
-    cfg.val_dataloader.dataset.type = cfg.dataset_type
-    cfg.val_dataloader.dataset.data_root = cfg.data_root
-    cfg.val_dataloader.dataset.data_prefix = dict(img_path=img_dir, seg_map_path=ann_dir)
-    cfg.val_dataloader.dataset.pipeline = cfg.test_pipeline
-    cfg.val_dataloader.dataset.ann_file = 'splits/val.txt'
+    # cfg.val_dataloader.dataset.type = cfg.dataset_type
+    # cfg.val_dataloader.dataset.data_root = cfg.data_root
+    # cfg.val_dataloader.dataset.data_prefix = dict(img_path=img_dir, seg_map_path=ann_dir)
+    # cfg.val_dataloader.dataset.pipeline = cfg.test_pipeline
+    # cfg.val_dataloader.dataset.ann_file = 'splits/val.txt'
 
-    cfg.test_dataloader = cfg.val_dataloader
+    # cfg.test_dataloader = cfg.val_dataloader
 
-    #test the dataset 
-    cfg.train_pipeline = [
-        dict(type='LoadImageFromFile'),
-        dict(type='LoadAnnotations'),
-        dict(keep_ratio=True, ratio_range=(0.5, 2.0,),
-            scale=(1024, 1024), type='RandomResize'),
-        dict(cat_max_ratio=0.75, crop_size=(1024,1024), type='RandomCrop'),
-        dict(prob=0.5, type='RandomFlip'),
-        dict(type='PhotoMetricDistortion'),
-        dict(type='PackSegInputs')
-        ]
-    dataset_test = SeaObjectDataset(data_root=data_root, data_prefix=cfg.train_dataloader.dataset.data_prefix, 
-                               test_mode=False, pipeline=cfg.train_pipeline)
+    # #test the dataset 
+    # cfg.train_pipeline = [
+    #     dict(type='LoadImageFromFile'),
+    #     dict(type='LoadAnnotations'),
+    #     dict(keep_ratio=True, ratio_range=(0.5, 2.0,),
+    #         scale=(1024, 1024), type='RandomResize'),
+    #     dict(cat_max_ratio=0.75, crop_size=(1024,1024), type='RandomCrop'),
+    #     dict(prob=0.5, type='RandomFlip'),
+    #     dict(type='PhotoMetricDistortion'),
+    #     dict(type='PackSegInputs')
+    #     ]
+    # dataset_test = SeaObjectDataset(data_root=data_root, data_prefix=cfg.train_dataloader.dataset.data_prefix, 
+    #                            test_mode=False, pipeline=cfg.train_pipeline)
     # # Load the pretrained weights
     # cfg.load_from = osp.join(checkpoint_dir, 'bisenetv1_r50-d32_in1k-pre_4x4_1024x1024_160k_cityscapes_20210917_234628-8b304447.pth')
 
