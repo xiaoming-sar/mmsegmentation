@@ -1,7 +1,7 @@
 norm_cfg = dict(type='SyncBN', requires_grad=True)
 crop_size = (
-    1008,
-    1008,
+   1008,
+   1008,
 )
 data_preprocessor = dict(
     bgr_to_rgb=True,
@@ -51,7 +51,7 @@ model = dict(
     pretrained=None, # Pretrained weights loaded within TIMMBackbone
     backbone=dict(
         type='TIMMBackbone',
-        model_name='sam2_hiera_base_plus',
+        model_name='sam2_hiera_large.fb_r1024_2pt1',
         features_only=True, # Crucial for getting multi-stage features
         pretrained=True,    # Load TIMM's pretrained weights
         patch_size=7,
@@ -59,8 +59,8 @@ model = dict(
         ),
     decode_head=dict(
         type='SegformerHead',
-        # Input channels from the 4 stages of Hiera-B+
-        in_channels=[112, 224, 448, 896],
+        # Input channels from the 4 stages of Hiera-large
+        in_channels=[144, 288, 576, 1152],
         in_index=[0, 1, 2, 3],
         channels=256, # Dimension of the fused features before classification, 256 is common for smaller heads, 768 for larger
         dropout_ratio=0.1,
