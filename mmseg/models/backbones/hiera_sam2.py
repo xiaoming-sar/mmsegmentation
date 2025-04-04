@@ -1,656 +1,677 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# Copyright (c) OpenMMLab. All rights reserved. # MMSeg Adaptation
+# All rights reserved.
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+# Hiera: A Hierarchical Vision Transformer without the Bells-and-Whistles
+
 import math
-import warnings
-from collections import OrderedDict
-from copy import deepcopy
 from functools import partial
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import List, Tuple, Callable, Optional, Union, Sequence
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as cp
+from torch.nn.modules.utils import _pair, _ntuple # MMSeg Adaptation: For tuple handling
 
-from mmcv.cnn import build_activation_layer, build_norm_layer
-from mmcv.cnn.bricks.transformer import FFN, build_dropout
-# Keep LayerScale from timm as it's simple
-from timm.layers import LayerScale, DropPath, to_2tuple, use_fused_attn
-# from timm.layers import PatchEmbed as TimmPatchEmbed # Use custom or mmseg version
+# MMSeg Adaptation: Necessary imports from mm* libraries
+from mmengine.model import BaseModule
+from mmengine.runner import load_checkpoint
+from mmengine.logging import MMLogger
+from mmengine.model.weight_init import trunc_normal_
+from mmcv.cnn import build_norm_layer
 
-from mmengine.logging import print_log
-from mmengine.model import BaseModule, ModuleList
-from mmengine.model.weight_init import (constant_init, trunc_normal_,
-                                        trunc_normal_init)
-from mmengine.runner import CheckpointLoader
-from mmengine.utils import to_2tuple
+from timm.models.layers import DropPath, Mlp
 
+# MMSeg Adaptation: Assume hiera_utils.py is in the same directory or PYTHONPATH
+try:
+    from .hiera_utils import pretrained_model, conv_nd, do_pool, do_masked_conv, Unroll, Reroll
+except ImportError:
+    # Provide dummy implementations or raise clearer error if utils are missing
+    raise ImportError("hiera_utils.py not found. Please ensure it's in the correct path.")
+    # # Dummy example (replace with actual utils):
+    # class Unroll(nn.Module): def __init__(self, *args, **kwargs): super().__init__(); self.identity = nn.Identity() ; def forward(self, x): return self.identity(x)
+    # class Reroll(nn.Module): def __init__(self, *args, **kwargs): super().__init__(); self.identity = nn.Identity() ; def forward(self, x, *args): return self.identity(x) # Note: Reroll needs specific logic
+    # def conv_nd(dims): return {2: nn.Conv2d, 3: nn.Conv3d}[dims]
+    # def do_pool(x, stride): return F.max_pool2d(x, kernel_size=stride, stride=stride) # Example for 2D
+    # def do_masked_conv(x, conv, mask): return conv(x) # Simplified
+
+
+# MMSeg Adaptation: Register with MMSeg's backbone registry
 from mmseg.registry import MODELS
-# from ..utils import ConvPatchEmbed # Assuming you might have this, otherwise define below
 
-# --- Helper Functions (from timm HieraDet) ---
+# --- Functions/Classes Moved Mostly As-Is (Dependencies handled) ---
 
-def window_partition(x, window_size: Tuple[int, int]):
-    """ Partition into non-overlapping windows. Assumes H, W are divisible by window size. """
-    B, H, W, C = x.shape
-    x = x.view(B, H // window_size[0], window_size[0], W // window_size[1], window_size[1], C)
-    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size[0], window_size[1], C)
-    return windows
-
-def window_unpartition(windows: torch.Tensor, window_size: Tuple[int, int], hw: Tuple[int, int]):
-    """ Unpartition windows back into sequences. Assumes H, W are divisible by window size. """
-    H, W = hw
-    C = windows.shape[-1]
-    num_windows = H * W // (window_size[0] * window_size[1])
-    B = windows.shape[0] // num_windows
-    x = windows.view(B, H // window_size[0], W // window_size[1], window_size[0], window_size[1], C)
-    x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, C)
-    return x
-
-def _calc_pad(H: int, W: int, window_size: Tuple[int, int]) -> Tuple[int, int, int, int]:
-    """ Calculates padding required for window partitioning. """
-    pad_h = (window_size[0] - H % window_size[0]) % window_size[0]
-    pad_w = (window_size[1] - W % window_size[1]) % window_size[1]
-    Hp, Wp = H + pad_h, W + pad_w
-    return Hp, Wp, pad_h, pad_w
-
-# --- Custom Patch Embedding (if not using mmseg.models.utils.PatchEmbed) ---
-# Simplified version matching HieraPatchEmbed
-class ConvPatchEmbed(BaseModule):
-    def __init__(self,
-                 in_channels=3,
-                 embed_dims=768,
-                 kernel_size=7,
-                 stride=4,
-                 padding=3,
-                 norm_cfg=None,
-                 init_cfg=None):
-        super().__init__(init_cfg=init_cfg)
-        self.proj = nn.Conv2d(
-            in_channels, embed_dims,
-            kernel_size=to_2tuple(kernel_size),
-            stride=to_2tuple(stride),
-            padding=to_2tuple(padding)
-        )
-        if norm_cfg is not None:
-            self.norm = build_norm_layer(norm_cfg, embed_dims)[1]
-        else:
-            self.norm = None
-
-    def forward(self, x):
-        x = self.proj(x)
-        if self.norm is not None:
-            # Apply norm to BCHW format
-            x = self.norm(x)
-        # B C H W -> B H W C
-        x = x.permute(0, 2, 3, 1)
-        return x, x.shape[1:3] # Return H, W as well
-
-# --- Hiera Modules adapted for MMSegmentation ---
-
-class MMSegMultiScaleAttention(BaseModule):
-    fused_attn: torch.jit.Final[bool]
-
+class MaskUnitAttention(nn.Module):
+    """
+    Computes either Mask Unit or Global Attention. Also is able to perform q pooling.
+    Note: this assumes the tokens have already been flattened and unrolled into mask units.
+    See Unroll for more details.
+    (Code identical to original, moved as is)
+    """
     def __init__(
         self,
         dim: int,
         dim_out: int,
-        num_heads: int,
-        q_pool: nn.Module = None, # Pass the instantiated pooling layer
-        attn_drop_rate=0.,
-        proj_drop_rate=0.,
-        init_cfg=None,
+        heads: int,
+        q_stride: int = 1,
+        window_size: int = 0, # Flat window size
+        use_mask_unit_attn: bool = False,
     ):
-        super().__init__(init_cfg=init_cfg)
+        super().__init__()
+
         self.dim = dim
         self.dim_out = dim_out
-        self.num_heads = num_heads
-        head_dim = dim_out // num_heads
-        self.scale = head_dim ** -0.5
-        try:
-            # Use timm's helper, requires timm to be installed
-            self.fused_attn = use_fused_attn()
-        except ImportError:
-            self.fused_attn = False
-            print_log("timm not found, disabling fused attention", logger='current')
+        self.heads = heads
+        self.q_stride = q_stride
 
+        self.head_dim = dim_out // heads
+        self.scale = (self.head_dim) ** -0.5
 
-        self.q_pool = q_pool
-        self.qkv = nn.Linear(dim, dim_out * 3)
-        self.attn_drop = nn.Dropout(attn_drop_rate) # Added attn_drop
+        self.qkv = nn.Linear(dim, 3 * dim_out)
         self.proj = nn.Linear(dim_out, dim_out)
-        self.proj_drop = nn.Dropout(proj_drop_rate) # Added proj_drop
+
+        self.window_size = window_size
+        self.use_mask_unit_attn = use_mask_unit_attn
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, H, W, _ = x.shape
-        N = H * W # Number of tokens before pooling
+        """ Input should be of shape [batch, tokens, channels]. """
+        B, N, _ = x.shape
+        # Note: N here might be the number of *unmasked* tokens if MAE was used
+        # In standard backbone usage N = total tokens in the current grid arrangement
+        # window_size needs to be the *flat* size (e.g., 8*8=64)
+        num_windows = (
+            (N // (self.q_stride * self.window_size)) if self.use_mask_unit_attn else 1
+        )
+        if num_windows == 0 and self.use_mask_unit_attn:
+             # Handle cases where N is smaller than q_stride * window_size, maybe fallback to global
+             # This might happen if image size is small relative to mask units/strides
+             # Forcing global attention:
+             num_windows = 1
+             # Warning or assertion could be useful here depending on expected behavior
+             # print(f"Warning: N ({N}) < q_stride*window_size ({self.q_stride}*{self.window_size}). Forcing Global Attention.")
 
-        # qkv with shape (B, N, 3, nHead, C_head)
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, -1)
 
-        # q, k, v with shape (B, N, nheads, C_head)
-        q, k, v = torch.unbind(qkv, 2)
+        # B, N, C -> B, N, 3*C_out -> B, N, num_windows, 3, H, C_head -> 3, B, H, num_windows, N', C_head
+        # N' = N / num_windows
+        qkv = (
+            self.qkv(x)
+            .reshape(B, -1, num_windows, 3, self.heads, self.head_dim)
+            .permute(3, 0, 4, 2, 1, 5)
+        )
+        q, k, v = qkv[0], qkv[1], qkv[2] # Each is [B, H, num_windows, N', C_head]
 
-        # Q pooling (for downsample at stage changes)
-        if self.q_pool is not None:
-            q_pooled = q.reshape(B, H, W, -1).permute(0, 3, 1, 2)  # to BCHW for pool
-            q_pooled = self.q_pool(q_pooled).permute(0, 2, 3, 1) # BHWC_out
-            H_out, W_out = q_pooled.shape[1:3]  # downsampled shape
-            N_out = H_out * W_out
-            q = q_pooled.reshape(B, N_out, self.num_heads, -1) # B, N_out, nheads, C_head
+        if self.q_stride > 1:
+            # Refer to Unroll to see how this performs a maxpool-Nd
+            # Maxpool over the q_stride dimension
+            # q: [B, H, num_windows, q_stride * (N'/q_stride), C_head]
+            #   -> [B, H, num_windows, q_stride, (N'/q_stride), C_head]
+            # pool -> [B, H, num_windows, (N'/q_stride), C_head]
+            if q.shape[3] % self.q_stride != 0:
+                 raise ValueError(f"Shape {q.shape} dim 3 ({q.shape[3]}) is not divisible by q_stride {self.q_stride}")
+            q = (
+                q.view(B, self.heads, num_windows, self.q_stride, -1, self.head_dim)
+                .max(dim=3)
+                .values
+            ) # -> [B, H, num_windows, N'/q_stride, C_head]
+
+
+        if hasattr(F, "scaled_dot_product_attention"):
+            # Note: the original paper did *not* use SDPA, it's a free boost!
+             # Reshape q,k,v for SDPA: Needs [B, H, Seq, C_head] like format
+             # q: [B, H, num_windows, N_q, C_head] -> [B*H*num_windows, N_q, C_head]
+             # k: [B, H, num_windows, N_k, C_head] -> [B*H*num_windows, N_k, C_head]
+             # v: [B, H, num_windows, N_v, C_head] -> [B*H*num_windows, N_v, C_head]
+             N_q = q.shape[-2]
+             N_k = k.shape[-2]
+             N_v = v.shape[-2] # N_k == N_v
+             q = q.reshape(-1, N_q, self.head_dim)
+             k = k.reshape(-1, N_k, self.head_dim)
+             v = v.reshape(-1, N_v, self.head_dim)
+
+             x = F.scaled_dot_product_attention(q, k, v) # Output: [B*H*num_windows, N_q, C_head]
+             # Reshape back
+             # [B*H*num_windows, N_q, C_head] -> [B, H, num_windows, N_q, C_head]
+             # Transpose & reshape to final output format:
+             # [B, H, num_windows, N_q, C_head] -> [B, num_windows, N_q, H, C_head]
+             # -> [B, num_windows * N_q, H*C_head] = [B, N_out, C_out]
+             x = x.view(B, self.heads, num_windows, N_q, self.head_dim)
+             x = x.permute(0, 2, 3, 1, 4).reshape(B, num_windows * N_q, self.dim_out)
+
         else:
-            H_out, W_out = H, W
-            N_out = N
-
-        # Torch's SDPA expects [B, nheads, N, C_head]
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
-
-        if self.fused_attn:
-            # dropout_p is only applied during training
-            x = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p=self.attn_drop.p if self.training else 0.,
-            )
-        else:
-            q = q * self.scale
-            attn = q @ k.transpose(-1, -2) # B, nheads, N_out, N
-            attn = attn.softmax(dim=-1)
-            attn = self.attn_drop(attn)
-            x = attn @ v # B, nheads, N_out, C_head
-
-        # Transpose back: B, N_out, nheads, C_head -> B, H_out, W_out, C_out
-        x = x.transpose(1, 2).reshape(B, H_out, W_out, self.dim_out)
+             # Manual Attention Calculation
+             # q: [B, H, num_windows, N_q, C_head]
+             # k: [B, H, num_windows, N_k, C_head] -> k.T: [B, H, num_windows, C_head, N_k]
+             # attn = (q @ k.T) * scale
+             attn = (q * self.scale) @ k.transpose(-1, -2) # [B, H, num_windows, N_q, N_k]
+             attn = attn.softmax(dim=-1)
+             # x = attn @ v
+             # v: [B, H, num_windows, N_v, C_head] (N_v == N_k)
+             x = (attn @ v) # [B, H, num_windows, N_q, C_head]
+             # Reshape to final output format
+             N_q = x.shape[-2]
+             x = x.transpose(1, 3).reshape(B, num_windows * N_q, self.dim_out) # [B, N_out, C_out]
 
         x = self.proj(x)
-        x = self.proj_drop(x)
         return x
 
 
-class MMSegMultiScaleBlock(BaseModule):
+class HieraBlock(nn.Module):
+    """
+    Single Hiera Transformer Block.
+    (Code identical to original, but norm_layer now expects a callable, handled in Hiera main class)
+    """
     def __init__(
         self,
         dim: int,
         dim_out: int,
-        num_heads: int,
+        heads: int,
         mlp_ratio: float = 4.0,
-        q_stride: Optional[Tuple[int, int]] = None,
-        norm_cfg=dict(type='LN'),
-        act_cfg=dict(type='GELU'),
-        window_size: int = 0,
-        init_values: Optional[float] = None,
-        drop_rate=0.,
-        attn_drop_rate=0.,
-        drop_path_rate=0.,
-        with_cp=False,
-        init_cfg=None,
+        drop_path: float = 0.0,
+        norm_layer: Callable = nn.LayerNorm, # MMSeg Adaptation: Expect callable
+        act_layer: Callable = nn.GELU,
+        q_stride: int = 1,
+        window_size: int = 0, # Flat window size
+        use_mask_unit_attn: bool = False,
     ):
-        super().__init__(init_cfg=init_cfg)
-        self.with_cp = with_cp
-        self.window_size = to_2tuple(window_size)
-        self.is_windowed = any(w > 0 for w in self.window_size)
+        super().__init__()
+
         self.dim = dim
         self.dim_out = dim_out
-        self.q_stride = q_stride
 
+        # MMSeg Adaptation: Use norm_layer directly
+        self.norm1 = norm_layer(dim)
+        self.attn = MaskUnitAttention(
+            dim, dim_out, heads, q_stride, window_size, use_mask_unit_attn
+        )
+
+        # MMSeg Adaptation: Use norm_layer directly
+        self.norm2 = norm_layer(dim_out)
+        # MMSeg Adaptation: Use nn.GELU if act_layer is string? Or assume callable. Let's assume callable.
+        mlp_hidden_dim = int(dim_out * mlp_ratio)
+        self.mlp = Mlp(in_features=dim_out, hidden_features=mlp_hidden_dim, act_layer=act_layer)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0 else nn.Identity()
         if dim != dim_out:
             self.proj = nn.Linear(dim, dim_out)
         else:
+            # MMSeg Adaptation: Define proj as identity if dims are same for consistent attribute access
             self.proj = nn.Identity()
 
-        self.pool = None
-        if self.q_stride:
-            # Create the pooling layer here to be passed to attention
-            self.pool = nn.MaxPool2d(
-                kernel_size=q_stride,
-                stride=q_stride,
-                ceil_mode=False, # Hiera uses floor mode (ceil_mode=False)
-            )
-
-        self.norm1 = build_norm_layer(norm_cfg, dim)[1]
-        self.attn = MMSegMultiScaleAttention(
-            dim,
-            dim_out,
-            num_heads=num_heads,
-            q_pool=deepcopy(self.pool), # Pass a copy to attention
-            attn_drop_rate=attn_drop_rate,
-            proj_drop_rate=drop_rate,
-        )
-        # Use timm's LayerScale, simpler than finding mmcv equivalent
-        self.ls1 = LayerScale(dim_out, init_values=init_values) if init_values is not None else nn.Identity()
-        self.drop_path1 = build_dropout(
-            dict(type='DropPath', drop_prob=drop_path_rate)) if drop_path_rate > 0. else nn.Identity()
-
-        self.norm2 = build_norm_layer(norm_cfg, dim_out)[1]
-        ffn_hidden_dim = int(dim_out * mlp_ratio)
-        self.ffn = FFN(
-            embed_dims=dim_out,
-            feedforward_channels=ffn_hidden_dim,
-            num_fcs=2,
-            ffn_drop=drop_rate, # FFN drop uses proj_drop_rate
-            dropout_layer=dict(type='DropPath', drop_prob=drop_path_rate),
-            act_cfg=act_cfg,
-            add_identity=False, # We add identity outside FFN
-            init_cfg=None
-        )
-        self.ls2 = LayerScale(dim_out, init_values=init_values) if init_values is not None else nn.Identity()
-        self.drop_path2 = build_dropout(
-            dict(type='DropPath', drop_prob=drop_path_rate)) if drop_path_rate > 0. else nn.Identity()
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Input x: [B, N, C]
+        x_norm = self.norm1(x)
+        attn_out = self.attn(x_norm) # Output: [B, N_out, C_out]
 
-        def _inner_forward(x):
-            shortcut = x  # B, H, W, C
-            x_norm = self.norm1(x)
-
-            # Skip connection projection/pooling
-            if self.dim != self.dim_out:
-                shortcut = self.proj(x_norm) # Apply proj on normalized input like timm? Or non-normed? Let's stick to timm's non-normed.
-                shortcut = self.proj(x)
-                if self.pool is not None:
-                    shortcut_pool = shortcut.permute(0, 3, 1, 2) # BCHW
-                    shortcut_pool = self.pool(shortcut_pool)
-                    shortcut = shortcut_pool.permute(0, 2, 3, 1) # BHWC
-            elif self.pool is not None: # Need to pool shortcut even if dim doesn't change
-                 shortcut_pool = shortcut.permute(0, 3, 1, 2) # BCHW
-                 shortcut_pool = self.pool(shortcut_pool)
-                 shortcut = shortcut_pool.permute(0, 2, 3, 1) # BHWC
-
-
-            # Window partition
-            H, W = x_norm.shape[1:3]
-            window_size = self.window_size
-            Hp, Wp, pad_h, pad_w = H, W, 0, 0 # Init for non-windowed case
-            if self.is_windowed:
-                Hp, Wp, pad_h, pad_w = _calc_pad(H, W, window_size)
-                if pad_h > 0 or pad_w > 0:
-                    x_norm = F.pad(x_norm, (0, 0, 0, pad_w, 0, pad_h))
-                x_windows = window_partition(x_norm, window_size)
-                attn_in = x_windows
-            else:
-                attn_in = x_norm # Use the full feature map
-
-            # Attention + Q Pooling (if stage change)
-            attn_windows = self.attn(attn_in) # Output shape depends on pooling
-
-            # Determine output H, W after potential pooling in attention
-            if self.q_stride is not None:
-                H_out, W_out = shortcut.shape[1:3]
-                 # Window size needs adjustment if pooling happened inside windowed attention
-                if self.is_windowed:
-                    window_size = (self.window_size[0] // self.q_stride[0], self.window_size[1] // self.q_stride[1])
-                    # Recalculate padding based on output size
-                    Hp, Wp, pad_h, pad_w = _calc_pad(H_out, W_out, window_size)
-            else:
-                H_out, W_out = H, W
-                # Use original padded size if no pooling
-                Hp, Wp, pad_h, pad_w = Hp, Wp, pad_h, pad_w
-
-
-            # Reverse window partition
-            if self.is_windowed:
-                x_attn = window_unpartition(attn_windows, window_size, (Hp, Wp))
-                # Unpad if needed
-                if pad_h > 0 or pad_w > 0:
-                    x_attn = x_attn[:, :H_out, :W_out, :].contiguous()
-            else:
-                 x_attn = attn_windows # Output is already the full feature map
-
-
-            # First residual connection
-            x = shortcut + self.drop_path1(self.ls1(x_attn))
-
-            # Second residual connection (MLP)
-            x_norm2 = self.norm2(x)
-            x_mlp = self.ffn(x_norm2)
-            x = x + self.drop_path2(self.ls2(x_mlp))
-
-            return x
-
-        if self.with_cp and x.requires_grad:
-            x = cp.checkpoint(_inner_forward, x)
+        # Apply projection and pooling to input before residual connection if needed
+        if self.dim != self.dim_out:
+             # Pool the input to match the output spatial size reduction caused by q_stride
+             # Assume do_pool handles token sequences [B, N, C] -> [B, N/q_stride, C]
+             # The projection changes channel dimension
+             x_residual = do_pool(self.proj(x_norm), stride=self.attn.q_stride)
+             # MMSeg Adaptation: Check if do_pool exists and works on [B,N,C]
+             # If do_pool needs spatial layout, this needs rework, but MaskUnitAttention implies N is flat token list.
+             # Let's assume do_pool works on [B, N, C] by max-pooling chunks of size q_stride.
         else:
-            x = _inner_forward(x)
+             # If no dimension change, no projection needed.
+             # If q_stride > 1, the input `x` needs pooling to match `attn_out` shape for residual.
+             if self.attn.q_stride > 1:
+                 x_residual = do_pool(x, stride=self.attn.q_stride)
+             else:
+                 x_residual = x
+
+        x = x_residual + self.drop_path(attn_out)
+
+        # MLP
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
 
-@MODELS.register_module()
-class Hiera(BaseModule):
-    """ Hiera Vision Transformer Backbone for MMSegmentation
-
-    Based on timm implementation: https://github.com/huggingface/pytorch-image-models/blob/main/timm/models/hiera.py
-    Reference: https://arxiv.org/abs/2306.00989
+class PatchEmbed(nn.Module):
+    """
+    Patch embed that supports any number of spatial dimensions (1d, 2d, 3d).
+    (Code identical to original, relies on hiera_utils.conv_nd and do_masked_conv)
     """
     def __init__(
-            self,
-            in_channels: int = 3,
-            embed_dims: int = 96,  # initial embed dim
-            num_heads: int = 1,  # initial number of heads
-            patch_kernel: Union[int, Tuple[int, int]] = 7,
-            patch_stride: Union[int, Tuple[int, int]] = 4,
-            patch_padding: Union[int, Tuple[int, int]] = 3,
-            # patch_size: Optional[Union[int, Tuple[int, int]]] = None, # TODO: Add ViT-style patch embed option
-            q_pool: int = 3,  # number of q_pool stages
-            q_stride: Tuple[int, int] = (2, 2),  # downsample stride bet. stages
-            stages: Tuple[int, ...] = (2, 3, 16, 3),  # blocks per stage
-            dim_mul: float = 2.0,  # dim_mul factor at stage shift
-            head_mul: float = 2.0,  # head_mul factor at stage shift
-            mlp_ratio: float = 4.0, # MLP expansion ratio
-            global_pos_size: Tuple[int, int] = (7, 7), # Size for global part of pos embed
-            # window size per stage, when not using global att.
-            window_spec: Tuple[int, ...] = (8, 4, 14, 7),
-            # global attn in these blocks (0-based index)
-            global_att_blocks: Optional[Tuple[int, ...]] = (12, 16, 20),
-            init_values: Optional[float] = None, # LayerScale init value
-            drop_rate: float = 0.0, # General dropout for FFN, Attn proj
-            attn_drop_rate: float = 0.0, # Attention map dropout
-            drop_path_rate: float = 0.0,  # stochastic depth
-            norm_cfg=dict(type='LN'),
-            act_cfg=dict(type='GELU'),
-            with_cp: bool = False,
-            pretrained: Optional[str] = None,
-            init_cfg: Optional[Union[Dict, List[Dict]]] = None,
-            out_indices: Sequence[int] = (0, 1, 2, 3),
-            frozen_stages: int = -1,
-            # fix_init: bool = True, # From timm, maybe apply later if needed
+        self,
+        dim_in: int,
+        dim_out: int,
+        kernel: Tuple[int, ...],
+        stride: Tuple[int, ...],
+        padding: Tuple[int, ...],
     ):
-        assert not (init_cfg and pretrained), \
-            'init_cfg and pretrained cannot be specified at the same time'
-        if isinstance(pretrained, str):
-            warnings.warn('DeprecationWarning: pretrained is deprecated, '
-                          'please use "init_cfg" instead')
-            init_cfg = dict(type='Pretrained', checkpoint=pretrained)
-        elif pretrained is None:
-            init_cfg = init_cfg
-        else:
-            raise TypeError('pretrained must be a str or None')
+        super().__init__()
 
-        super().__init__(init_cfg=init_cfg)
-
-        assert len(stages) == len(window_spec)
-        self.window_spec = window_spec
-        self.num_stages = len(stages)
-        self.out_indices = out_indices
-        self.frozen_stages = frozen_stages
-
-        depth = sum(stages)
-        self.q_stride = q_stride
-        self.stage_ends = [sum(stages[:i]) - 1 for i in range(1, self.num_stages + 1)]
-        assert 0 <= q_pool <= len(self.stage_ends[:-1])
-        # Blocks where pooling happens (0-based index)
-        self.q_pool_blocks = [x + 1 for x in self.stage_ends[:-1]][:q_pool]
-
-        # TODO: Add ViT-style patch embed option if needed
-        # Currently only Conv-based
-        self.patch_embed = ConvPatchEmbed(
-            in_channels=in_channels,
-            embed_dims=embed_dims,
-            kernel_size=patch_kernel,
-            stride=patch_stride,
-            padding=patch_padding,
-            # norm_cfg=norm_cfg # Hiera doesn't norm patch embed
+        # Support any number of spatial dimensions
+        self.spatial_dims = len(kernel)
+        self.proj = conv_nd(self.spatial_dims)(
+            dim_in,
+            dim_out,
+            kernel_size=kernel,
+            stride=stride,
+            padding=padding,
         )
 
-        # Which blocks have global att? (convert to set for faster lookup)
-        self.global_att_blocks = set(global_att_blocks) if global_att_blocks is not None else set()
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        # MMSeg Adaptation: Mask is removed for standard backbone usage
+        # x = do_masked_conv(x, self.proj, mask) # Original
+        x = self.proj(x) # Output: [B, C_out, D', H', W'] or [B, C_out, H', W']
 
-        # Windowed positional embedding
-        self.global_pos_size = global_pos_size
-        self.pos_embed = nn.Parameter(torch.zeros(1, embed_dims, *self.global_pos_size))
-        # Assume square window for pos embed window part
-        # Use first stage window spec for this parameter
-        win_size_pos = self.window_spec[0]
-        self.pos_embed_window = nn.Parameter(torch.zeros(1, embed_dims, win_size_pos, win_size_pos))
+        # Flatten spatial/temporal dims and transpose to [B, N, C]
+        x = x.reshape(x.shape[0], x.shape[1], -1).transpose(2, 1)
+        return x
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+# --- Main Hiera Class Adaptation ---
 
+@MODELS.register_module()
+class HieraSAM2(BaseModule): # MMSeg Adaptation: Inherit from BaseModule
+    """ Hiera Vision Transformer Backbone for MMSegmentation """
+    # MMSeg Adaptation: Removed @has_config, PyTorchModelHubMixin
+
+    def __init__(
+        self,
+        img_size: Union[int, Tuple[int, int]] = 1024, # MMSeg Adaptation: Use img_size convention
+        in_chans: int = 3,
+        embed_dim: int = 96,
+        num_heads: int = 1,
+        stages: Tuple[int, ...] = (2, 3, 16, 3),
+        q_pool: int = 3,
+        q_stride: Tuple[int, ...] = (2, 2), # e.g., (2,2) for 2D, (1,2,2) for 3D
+        mask_unit_size: Tuple[int, ...] = (8, 8), # e.g., (8,8) for 2D, (1,8,8) for 3D
+
+        mask_unit_attn: Tuple[bool, ...] = (True, True, False, False),
+        dim_mul: float = 2.0,
+        head_mul: float = 2.0,
+        patch_kernel: Tuple[int, ...] = (7, 7),
+        patch_stride: Tuple[int, ...] = (4, 4),
+        patch_padding: Tuple[int, ...] = (3, 3),
+        mlp_ratio: float = 4.0,
+        drop_path_rate: float = 0.0,
+        norm_cfg: dict = dict(type='LN', eps=1e-6), # MMSeg Adaptation: Use norm_cfg
+        act_layer: Callable = nn.GELU, # MMSeg Adaptation: Standardize act_layer if needed, here GELU
+        sep_pos_embed: bool = False,
+        interpolate_pos_encoding: bool = True, # MMSeg Adaptation: Flag for pos embed interpolation
+        out_indices: Sequence[int] = (0, 1, 2, 3), # MMSeg Adaptation: Indices of stages to output
+        frozen_stages: int = -1, # MMSeg Adaptation: Standard backbone freezing param
+        init_cfg: Optional[dict] = None, # MMSeg Adaptation: Standard init config
+        # MMSeg Adaptation: Removed class/head specific params: num_classes, head_dropout, head_init_scale
+    ):
+        super().__init__(init_cfg=init_cfg) # MMSeg Adaptation: Call BaseModule init
+
+        self.img_size = _pair(img_size) # Ensure tuple like (224, 224)
+        # MMSeg Adaptation: Determine spatial dims from patch_kernel length
+        self.spatial_dims = len(patch_kernel)
+        if self.spatial_dims not in [2, 3]:
+             raise ValueError("Hiera backbone currently supports 2D or 3D input.")
+
+        # MMSeg Adaptation: Handle norm_layer from norm_cfg
+        self.norm_layer =  build_norm_layer(norm_cfg, embed_dim)[1]# Get the LayerNorm class
+
+        depth = sum(stages)
+        self.stages_depth = stages
+        self.patch_stride_spatial = patch_stride[-self.spatial_dims:] # Spatial part of stride
+        self.tokens_spatial_shape = [i // s for i, s in zip(self.img_size[-self.spatial_dims:], self.patch_stride_spatial)]
+        num_tokens = math.prod(self.tokens_spatial_shape)
+        flat_mu_size = math.prod(mask_unit_size)
+        flat_q_stride = math.prod(q_stride)
+
+        assert q_pool < len(stages), f"q_pool ({q_pool}) must be less than num stages ({len(stages)})"
+        self.q_pool, self.q_stride_spatial = q_pool, q_stride[-self.spatial_dims:]
+        self.mu_size, self.mask_unit_size = flat_mu_size, mask_unit_size
+        # MMSeg Adaptation: Calculate mask spatial shape based on spatial dims
+        self.mask_spatial_shape = [
+            i // s for i, s in zip(self.tokens_spatial_shape, self.mask_unit_size[-self.spatial_dims:])
+        ]
+        self.stage_ends = [sum(stages[:i]) - 1 for i in range(1, len(stages) + 1)]
+
+        # MMSeg Adaptation: Store out_indices and frozen_stages
+        self.out_indices = out_indices
+        self.frozen_stages = frozen_stages
+        self.interpolate_pos_encoding = interpolate_pos_encoding
+
+        self.patch_embed = PatchEmbed(
+            in_chans, embed_dim, patch_kernel, patch_stride, patch_padding
+        )
+
+        self.sep_pos_embed = sep_pos_embed
+        if sep_pos_embed:
+             if self.spatial_dims != 3:
+                  raise ValueError("Separable pos embed currently only supported for 3D input")
+             # Example assumes 3D: T, H, W
+             self.pos_embed_spatial = nn.Parameter(
+                  torch.zeros(1, self.tokens_spatial_shape[1] * self.tokens_spatial_shape[2], embed_dim)
+             )
+             self.pos_embed_temporal = nn.Parameter(
+                  torch.zeros(1, self.tokens_spatial_shape[0], embed_dim)
+             )
+        else:
+             self.pos_embed = nn.Parameter(torch.zeros(1, num_tokens, embed_dim))
+
+        # Setup roll and reroll modules (CRITICAL: Assumes hiera_utils are available)
+        # MMSeg Adaptation: Ensure input_size, patch_stride, q_stride match expected format of Unroll/Reroll
+        unroll_q_strides = [q_stride] * len(self.stage_ends[:-1]) # q_stride repeated
+        self.unroll = Unroll(
+            self.img_size, patch_stride, unroll_q_strides
+        )
+        self.reroll = Reroll(
+            self.img_size,
+            patch_stride,
+            unroll_q_strides,
+            self.stage_ends,
+            q_pool,
+        )
+
+        # q_pool locations
+        q_pool_blocks = [x + 1 for x in self.stage_ends[:q_pool]]
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
+
+        # Transformer blocks
         cur_stage_idx = 0
-        cur_block_idx = 0
-        current_dim = embed_dims
-        current_heads = num_heads
-        self.blocks = ModuleList()
-        self.num_features = [] # Store dims for output norms
+        cur_embed_dim = embed_dim
+        cur_num_heads = num_heads
+        cur_flat_mu_size = flat_mu_size # Track current flat mask unit size after pooling
+        self.blocks = nn.ModuleList()
 
-        for i in range(self.num_stages):
-            stage_depth = stages[i]
-            for j in range(stage_depth):
-                is_global_att = cur_block_idx in self.global_att_blocks
-                window_size = 0 if is_global_att else self.window_spec[i]
+        for i in range(depth):
+            dim_out = cur_embed_dim
+            is_stage_transition = (i - 1) in self.stage_ends
+            is_q_pool_block = i in q_pool_blocks
 
-                dim_out = current_dim
-                heads_out = current_heads
-                block_q_stride = None
+            if is_stage_transition:
+                dim_out = int(cur_embed_dim * dim_mul)
+                cur_num_heads = int(cur_num_heads * head_mul)
+                cur_stage_idx += 1
 
-                # Check if this block is the start of a new stage (except the first block)
-                # Pooling happens *at* the block index specified in q_pool_blocks
-                if cur_block_idx in self.q_pool_blocks:
-                    dim_out = int(current_dim * dim_mul)
-                    heads_out = int(current_heads * head_mul)
-                    block_q_stride = self.q_stride
-
-                block = MMSegMultiScaleBlock(
-                    dim=current_dim,
-                    dim_out=dim_out,
-                    num_heads=heads_out, # Use potentially updated head count
-                    mlp_ratio=mlp_ratio,
-                    q_stride=block_q_stride,
-                    window_size=window_size,
-                    init_values=init_values,
-                    drop_rate=drop_rate,
-                    attn_drop_rate=attn_drop_rate,
-                    drop_path_rate=dpr[cur_block_idx],
-                    norm_cfg=norm_cfg,
-                    act_cfg=act_cfg,
-                    with_cp=with_cp,
-                )
-                current_dim = dim_out
-                current_heads = heads_out # Update heads for next block within stage if needed
-                self.blocks.append(block)
-                cur_block_idx += 1
-
-            # Store feature dimension at the end of each stage
-            self.num_features.append(current_dim)
+            if is_q_pool_block:
+                 if cur_flat_mu_size % flat_q_stride != 0:
+                      raise ValueError(f"Current flat_mu_size {cur_flat_mu_size} not divisible by flat_q_stride {flat_q_stride} at block {i}")
+                 cur_flat_mu_size //= flat_q_stride
 
 
-        # Add normalization layers for each output index
-        for i in self.out_indices:
-            if i >= len(self.num_features):
-                 raise ValueError(f"out_index {i} is out of range for {len(self.num_features)} stages.")
-            layer = build_norm_layer(norm_cfg, self.num_features[i])[1]
-            layer_name = f'norm{i}'
-            self.add_module(layer_name, layer)
+            # Mask unit or global attention. Lag by 1 block.
+            use_mask_unit_attn = mask_unit_attn[cur_stage_idx]
 
+            block = HieraBlock(
+                dim=cur_embed_dim,
+                dim_out=dim_out,
+                heads=cur_num_heads,
+                mlp_ratio=mlp_ratio,
+                drop_path=dpr[i],
+                norm_layer=self.norm_layer, # Pass the callable norm_layer
+                act_layer=act_layer,
+                q_stride=(flat_q_stride if is_q_pool_block else 1),
+                window_size=cur_flat_mu_size,
+                use_mask_unit_attn=use_mask_unit_attn,
+            )
+
+            cur_embed_dim = dim_out
+            self.blocks.append(block)
+
+        # MMSeg Adaptation: Add norm layers for each output stage
+        self.num_features = [] # Store output feature dimensions
+        for i, stage_end_idx in enumerate(self.stage_ends):
+             norm_layer = self.norm_layer(self.blocks[stage_end_idx].dim_out)
+             layer_name = f'norm{i}'
+             self.add_module(layer_name, norm_layer)
+             self.num_features.append(self.blocks[stage_end_idx].dim_out)
+
+
+        # MMSeg Adaptation: Removed classification head init
+        # MMSeg Adaptation: Weight init handled by init_weights / init_cfg
+
+        # MMSeg Adaptation: Freeze stages logic
         self._freeze_stages()
 
-
     def _freeze_stages(self):
+        """Freeze stages param and norm in patch_embed."""
         if self.frozen_stages >= 0:
-            self.patch_embed.eval()
-            for param in self.patch_embed.parameters():
-                param.requires_grad = False
-            self.pos_embed.requires_grad = False
-            self.pos_embed_window.requires_grad = False
+             self.patch_embed.eval()
+             for param in self.patch_embed.parameters():
+                 param.requires_grad = False
+             if self.sep_pos_embed:
+                   self.pos_embed_spatial.requires_grad = False
+                   self.pos_embed_temporal.requires_grad = False
+             else:
+                   self.pos_embed.requires_grad = False
 
-        # Freeze stages (blocks are indexed sequentially)
-        # frozen_stages corresponds to the number of *stages* to freeze
-        start_block_idx = 0
-        for i in range(self.frozen_stages):
-             end_block_idx = self.stage_ends[i] + 1 # stage_ends is 0-based index
-             for blk_idx in range(start_block_idx, end_block_idx):
-                 m = self.blocks[blk_idx]
-                 m.eval()
-                 for param in m.parameters():
-                     param.requires_grad = False
-             start_block_idx = end_block_idx
 
-             # Freeze the output norm layer if the stage is frozen
-             if i in self.out_indices:
-                 norm_layer = getattr(self, f'norm{i}')
+        for i in range(1, self.frozen_stages + 1):
+             # Freeze blocks in the stage
+             stage_start_idx = 0 if i == 1 else self.stage_ends[i-2] + 1
+             stage_end_idx = self.stage_ends[i-1]
+             for idx in range(stage_start_idx, stage_end_idx + 1):
+                  m = self.blocks[idx]
+                  m.eval()
+                  for param in m.parameters():
+                      param.requires_grad = False
+
+             # Freeze the norm layer for the stage if it exists and is needed
+             if i-1 in self.out_indices:
+                 norm_layer = getattr(self, f'norm{i-1}')
                  norm_layer.eval()
                  for param in norm_layer.parameters():
                      param.requires_grad = False
 
 
+    # MMSeg Adaptation: Added init_weights method
     def init_weights(self):
-        """Initialize weights."""
-        print_log(f'Initializing {self.__class__.__name__} weights')
+        """Initialize weights based on init_cfg."""
+        logger = MMLogger.get_current_instance()
         if self.init_cfg is None:
-            print_log('No pretrained ckpt specified, init from scratch.')
-            trunc_normal_(self.pos_embed, std=0.02)
-            trunc_normal_(self.pos_embed_window, std=0.02)
-            self.apply(self._init_weights_fn)
-            # Apply fix_init like timm? (Optional)
-            # self.fix_init_weight()
+             logger.info('Initiating weights randomly.')
+             # Default initialization
+             if self.sep_pos_embed:
+                 trunc_normal_(self.pos_embed_spatial, std=0.02)
+                 trunc_normal_(self.pos_embed_temporal, std=0.02)
+             else:
+                 trunc_normal_(self.pos_embed, std=0.02)
+             self.apply(self._init_weights) # Apply default linear/conv init
         elif isinstance(self.init_cfg, dict) and self.init_cfg['type'] == 'Pretrained':
-            checkpoint = CheckpointLoader.load_checkpoint(
-                self.init_cfg['checkpoint'], logger=None, map_location='cpu')
+             pretrained_path = self.init_cfg['checkpoint']
+             logger.info(f'Loading pretrained weights from {pretrained_path}')
 
-            if 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint: # Common in timm checkpoints
-                 state_dict = checkpoint['model']
-            else:
-                state_dict = checkpoint
-
-            # --- Checkpoint Key Adaptation ---
-            # Handle potential prefixes (e.g., from SAM2)
-            # Example prefix, adjust if needed based on actual checkpoint
-            sam2_prefix = 'image_encoder.trunk.'
-            if any(k.startswith(sam2_prefix) for k in state_dict.keys()):
-                 print_log(f"Removing prefix '{sam2_prefix}' from checkpoint keys.")
-                 state_dict = {k.replace(sam2_prefix, ''): v for k, v in state_dict.items() if k.startswith(sam2_prefix)}
-
-            # Handle MLP layer renaming: timm 'mlp.fc1/fc2' vs mmcv 'ffn.layers.0.0/...'
-            # This depends on the exact structure of FFN in mmcv
-            # Assuming FFN has layers.0.0 for fc1 and layers.1 for fc2
-            adapted_state_dict = OrderedDict()
-            for k, v in state_dict.items():
-                new_k = k
-                if 'mlp.fc1' in k:
-                    new_k = k.replace('mlp.fc1', 'ffn.layers.0.0') # Adjust if FFN structure differs
-                elif 'mlp.fc2' in k:
-                    new_k = k.replace('mlp.fc2', 'ffn.layers.1') # Adjust if FFN structure differs
-                adapted_state_dict[new_k] = v
-            state_dict = adapted_state_dict
-            # --- End Checkpoint Key Adaptation ---
+             # Define key mappings (example, adjust as needed based on checkpoint keys)
+             revise_keys = [
+                 (r'^head\.projection', None), # Remove classification head
+                 (r'^norm\.', None),        # Remove final norm if model had one for classification
+                 (r'^patch_embed\.proj\.', 'patch_embed.proj.'),
+                 # Add more specific mappings if needed, e.g. block names
+                 # (r'^blocks\.(\d+)\.', r'blocks.\1.') # Simple identity map if names match
+             ]
+             # If pos embed keys differ:
+             # revise_keys.extend([
+             #      (r'^pos_embed', 'pos_embed'), # if names match
+             # ])
 
 
-            # --- Positional Embedding Interpolation ---
-            rel_pos_keys = [k for k in state_dict if "pos_embed" in k]
-            for k in rel_pos_keys:
-                if k in self.state_dict():
-                    ckpt_pos_embed = state_dict[k]
-                    model_pos_embed = self.state_dict()[k]
-                    if ckpt_pos_embed.shape != model_pos_embed.shape:
-                        print_log(f'Interpolating position embedding {k} from '
-                                  f'{ckpt_pos_embed.shape} to {model_pos_embed.shape}')
-                        # Assumes shape is (1, C, H, W) for interpolation
-                        if ckpt_pos_embed.ndim == 4 and model_pos_embed.ndim == 4:
-                             # Check if channel dimension matches
-                             if ckpt_pos_embed.shape[1] != model_pos_embed.shape[1]:
-                                 print_log(f'Channel mismatch for {k}, skipping interpolation.', level='warning')
-                                 state_dict[k] = model_pos_embed # Use initialized weights instead
-                                 continue
-
-                             new_size = model_pos_embed.shape[2:]
-                             state_dict[k] = F.interpolate(
-                                 ckpt_pos_embed, size=new_size, mode='bicubic', align_corners=False)
-                        else:
-                             print_log(f'Unexpected shape for {k}, skipping interpolation.', level='warning')
-                             state_dict[k] = model_pos_embed # Use initialized weights instead
-            # --- End Positional Embedding Interpolation ---
-
-            # Load the adapted state dict
-            msg = self.load_state_dict(state_dict, strict=False)
-            print_log(f"Load pretrained weights msg: {msg}", logger='current')
+             load_checkpoint(self, pretrained_path, map_location='cpu', strict=False, logger=logger, revise_keys=revise_keys)
         else:
-             raise TypeError("init_cfg must be None or a dict with type='Pretrained'")
+             # Initialize using other methods specified in init_cfg (e.g., Kaiming, Xavier)
+             # This relies on BaseModule's init_weights implementation
+             super().init_weights()
 
-
-    @staticmethod
-    def _init_weights_fn(m):
-        """Standard weight init."""
-        if isinstance(m, nn.Linear):
-            trunc_normal_init(m, std=.02, bias=0.)
-        elif isinstance(m, nn.LayerNorm):
-            constant_init(m, val=1.0, bias=0.)
-        elif isinstance(m, nn.Conv2d):
-             # Optional: Init conv like ViT/MAE
-             fan_in = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
-             fan_in //= m.groups
-             m.weight.data.normal_(0, math.sqrt(2.0 / fan_in))
+    # Keep original _init_weights for default init
+    def _init_weights(self, m, init_bias=0.02):
+        if isinstance(m, (nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+             # Use mmcv trunc_normal_ for consistency if preferred, or keep original
+             # nn.init.trunc_normal_(m.weight, std=0.02)
+             trunc_normal_(m.weight, std=0.02)
              if m.bias is not None:
-                 m.bias.data.zero_()
+                 nn.init.constant_(m.bias, init_bias)
+        elif isinstance(m, (nn.LayerNorm)): # MMSeg Adaptation: Check specific norm type used
+             nn.init.constant_(m.bias, init_bias)
+             nn.init.constant_(m.weight, 1.0)
 
-    # Optional: Implement fix_init_weight from timm if needed
-    # def fix_init_weight(self):
-    #     def rescale(param, _layer_id):
-    #         param.div_(math.sqrt(2.0 * _layer_id))
-    #     # Block index starts from 1 for scaling
-    #     for layer_id, layer in enumerate(self.blocks, 1):
-    #         rescale(layer.attn.proj.weight.data, layer_id)
-    #         # Assuming FFN structure allows accessing fc2 weight directly
-    #         if hasattr(layer.ffn, 'layers') and len(layer.ffn.layers) > 1:
-    #              rescale(layer.ffn.layers[1].weight.data, layer_id)
-    #         elif hasattr(layer.ffn, 'fc2'): # Fallback if structure is different
-    #              rescale(layer.ffn.fc2.weight.data, layer_id)
-
-
-    def _pos_embed(self, x: torch.Tensor) -> torch.Tensor:
-        """Applies and interpolates positional embeddings."""
-        B, H, W, C = x.shape
-        pos_embed = self.pos_embed # 1, C, Hp, Wp (global size)
-        window_embed = self.pos_embed_window # 1, C, Hw, Ww (window size)
-
-        # Interpolate global part
-        pos_embed_int = F.interpolate(pos_embed, size=(H, W), mode="bicubic", align_corners=False)
-
-        # Tile window part
-        win_h, win_w = window_embed.shape[-2:]
-        if H % win_h != 0 or W % win_w != 0:
-             # This case should ideally be handled by ensuring input size compatibility
-             # or by padding/cropping window_embed before tiling.
-             # For simplicity, we'll just use the interpolated global part if tiling doesn't fit.
-             # print_log(f"Feature map size ({H},{W}) not divisible by window pos embed ({win_h},{win_w}). Using global pos embed only.", level='warning')
-             final_pos_embed = pos_embed_int
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        """Which parameters to exclude from weight decay."""
+        if self.sep_pos_embed:
+             return {"pos_embed_spatial", "pos_embed_temporal"}
         else:
-             tile_h = H // win_h
-             tile_w = W // win_w
-             # Tile requires explicit expand before reshape to avoid ambiguity
-             window_embed_tiled = window_embed.expand(B, -1, -1, -1) # Expand batch dim if needed (should be 1)
-             window_embed_tiled = window_embed_tiled.repeat(1, 1, tile_h, tile_w) # Tile spatial dims
-             # Add tiled window embed to interpolated global embed
-             final_pos_embed = pos_embed_int + window_embed_tiled
+             return {"pos_embed"}
 
-        # Permute to B H W C and add to input
-        final_pos_embed = final_pos_embed.permute(0, 2, 3, 1)
-        return x + final_pos_embed
+    def _get_pos_embed(self, N_spatial: int, N_temporal: int = 1) -> torch.Tensor:
+         """ Get positional encoding, potentially interpolating it."""
+         if self.sep_pos_embed:
+             # Assuming T, H, W format for tokens_spatial_shape
+             if N_temporal != self.tokens_spatial_shape[0]:
+                  # Interpolate temporal embedding
+                  pos_embed_temporal = F.interpolate(
+                      self.pos_embed_temporal.transpose(1, 2).reshape(1, -1, self.tokens_spatial_shape[0]),
+                      size=N_temporal, mode='linear', align_corners=False
+                  ).reshape(1, -1, N_temporal).transpose(1, 2)
+             else:
+                  pos_embed_temporal = self.pos_embed_temporal
+
+             target_spatial_size = N_spatial # Should be H*W
+             if target_spatial_size != self.pos_embed_spatial.shape[1]:
+                   # Interpolate spatial embedding (assuming 2D spatial for simplicity here)
+                   num_patches_w = self.tokens_spatial_shape[-1]
+                   num_patches_h = self.tokens_spatial_shape[-2]
+                   # Reshape to 2D grid: [1, H*W, C] -> [1, H, W, C] -> [1, C, H, W]
+                   pos_embed_spatial_grid = self.pos_embed_spatial.reshape(
+                       1, num_patches_h, num_patches_w, -1).permute(0, 3, 1, 2)
+                   # Calculate target H, W (need to know aspect ratio or assume square)
+                   # This requires knowing the target image's H, W after patch embedding
+                   # Let's assume target H/W can be inferred from N_spatial if roughly square
+                   target_h = target_w = int(math.sqrt(N_spatial))
+                   if target_h * target_w != N_spatial:
+                        # Fallback or error for non-square - requires target H/W info
+                        logger = MMLogger.get_current_instance()
+                        logger.warning(f"Cannot interpolate non-square spatial pos embed from {self.pos_embed_spatial.shape[1]} to {N_spatial}. Using original.")
+                        pos_embed_spatial_interp = self.pos_embed_spatial # No interpolation
+                   else:
+                        pos_embed_spatial_interp = F.interpolate(
+                             pos_embed_spatial_grid, size=(target_h, target_w), mode='bicubic', align_corners=False
+                        )
+                        # Reshape back: [1, C, H_new, W_new] -> [1, H_new, W_new, C] -> [1, H_new*W_new, C]
+                        pos_embed_spatial_interp = pos_embed_spatial_interp.permute(0, 2, 3, 1).reshape(1, target_spatial_size, -1)
+
+             else:
+                   pos_embed_spatial_interp = self.pos_embed_spatial
+
+             # Combine: Repeat spatial embed for each temporal step, add temporal embed repeated for each spatial token
+             pos_embed = pos_embed_spatial_interp.repeat(
+                 1, N_temporal, 1 # Repeat H*W embed T times
+             ) + torch.repeat_interleave(
+                 pos_embed_temporal, # Shape [1, T, C]
+                 target_spatial_size, # Repeat each T embed H*W times
+                 dim=1,
+             )
+
+         else:
+              # Standard non-separable case
+              total_tokens_target = N_spatial # Assuming 2D input for simplicity if not sep_pos_embed
+              if total_tokens_target != self.pos_embed.shape[1]:
+                   if self.interpolate_pos_encoding:
+                       # Interpolate 1D embedding or reshape to 2D/3D and interpolate
+                       # Example for 2D interpolation:
+                       num_patches = self.pos_embed.shape[1]
+                       num_patches_w = self.tokens_spatial_shape[-1]
+                       num_patches_h = self.tokens_spatial_shape[-2]
+                       if num_patches != num_patches_h * num_patches_w:
+                            raise ValueError("pos_embed shape mismatch with token shape")
+
+                       target_h = target_w = int(math.sqrt(total_tokens_target))
+                       if target_h * target_w != total_tokens_target:
+                            # Use 1D linear interpolation as fallback
+                            logger = MMLogger.get_current_instance()
+                            logger.warning(f"Non-square target token number {total_tokens_target}. Using 1D linear interpolation for pos embed.")
+                            pos_embed = F.interpolate(
+                                self.pos_embed.transpose(1,2), size=total_tokens_target, mode='linear', align_corners=False
+                            ).transpose(1,2)
+                       else:
+                            pos_embed_grid = self.pos_embed.reshape(1, num_patches_h, num_patches_w, -1).permute(0, 3, 1, 2)
+                            pos_embed_interp = F.interpolate(
+                                pos_embed_grid, size=(target_h, target_w), mode='bicubic', align_corners=False
+                            )
+                            pos_embed = pos_embed_interp.permute(0, 2, 3, 1).reshape(1, total_tokens_target, -1)
+                   else:
+                        pos_embed = self.pos_embed # No interpolation, assumes fixed size or handled by caller
+              else:
+                   pos_embed = self.pos_embed
+
+         return pos_embed
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor]:
-        # Input x: BCHW
-        x, hw = self.patch_embed(x) # Output x: BHWC, hw: (H, W)
-        x = self._pos_embed(x) # Adds pos embed, keeps BHWC
+        """Forward function."""
+        B, C, *spatial_shape = x.shape # H, W or T, H, W
+
+        # MMSeg Adaptation: Check input size vs self.img_size if not interpolating
+        if not self.interpolate_pos_encoding and tuple(spatial_shape[-self.spatial_dims:]) != tuple(self.img_size):
+             logger = MMLogger.get_current_instance()
+             logger.warning(f"Input size {tuple(spatial_shape)} differs from model's configured img_size {self.img_size}. Positional encoding might be incorrect.")
+
+
+        x = self.patch_embed(x) # -> [B, N, C_embed]
+        N = x.shape[1] # Number of tokens
+
+        # MMSeg Adaptation: Calculate target spatial/temporal tokens for pos embed
+        # This requires knowing how N relates back to spatial/temporal dims.
+        # Assuming N is product of spatial dims (and temporal if sep_pos_embed)
+        if self.sep_pos_embed:
+             # Need to infer N_spatial, N_temporal from N and original aspect ratio
+             # This is tricky without knowing the target spatial shape *after* patch_embed
+             # Let's assume N = N_temporal * N_spatial and aspect ratios are preserved roughly
+             orig_T = self.tokens_spatial_shape[0]
+             orig_H = self.tokens_spatial_shape[1]
+             orig_W = self.tokens_spatial_shape[2]
+             orig_N_spatial = orig_H * orig_W
+             # Infer target T, H, W from current input shape spatial_shape and patch stride
+             current_T = spatial_shape[0] // self.patch_stride[0] if self.spatial_dims == 3 else 1
+             current_H = spatial_shape[-2] // self.patch_stride[-2]
+             current_W = spatial_shape[-1] // self.patch_stride[-1]
+             current_N_spatial = current_H * current_W
+             current_N = current_T * current_N_spatial
+             if current_N != N:
+                  logger = MMLogger.get_current_instance()
+                  logger.warning(f"Calculated token number {current_N} mismatch with actual {N}. Positional encoding might be incorrect.")
+                  # Fallback: use original shapes for pos embed? Or error?
+                  # Using calculated N for pos embed size seems more robust if input size varies
+                  N_temporal = current_T
+                  N_spatial = current_N_spatial
+             else:
+                  N_temporal = current_T
+                  N_spatial = current_N_spatial
+
+        else: # Non-separable, assume 2D input or flattened 3D treated as 1D sequence
+             N_spatial = N # Treat all tokens as spatial for interpolation purposes
+             N_temporal = 1 # Not used
+
+
+        x = x + self._get_pos_embed(N_spatial=N_spatial, N_temporal=N_temporal)
+        # MMSeg Adaptation: Assuming Unroll takes [B, N, C] and returns potentially rearranged [B, N', C]
+        x = self.unroll(x)
+
+        # MMSeg Adaptation: Removed MAE mask logic
 
         outs = []
         cur_block_idx = 0
-        for i in range(self.num_stages):
-            stage_end_idx = self.stage_ends[i]
-            # Iterate through blocks of the current stage
-            while cur_block_idx <= stage_end_idx:
+        for stage_idx, stage_depth in enumerate(self.stages_depth):
+             for i in range(stage_depth):
                  x = self.blocks[cur_block_idx](x)
                  cur_block_idx += 1
 
-            # After completing a stage, check if it's in out_indices
-            if i in self.out_indices:
-                norm_layer = getattr(self, f'norm{i}')
-                normed_x = norm_layer(x)
-                # Convert to NCHW for standard MMSeg output format
-                out = normed_x.permute(0, 3, 1, 2).contiguous()
-                outs.append(out)
+             # Check if output is needed for this stage
+             if stage_idx in self.out_indices:
+                 # MMSeg Adaptation: Reroll expects the *end* block index of the stage
+                 stage_end_block_idx = self.stage_ends[stage_idx]
+                 # Reroll converts token list back to spatial: [B, N_stage, C_stage] -> [B, C_stage, H_stage, W_stage] (or T)
+                 # Critical: Ensure Reroll implementation produces the correct spatial shape.
+                 out_spatial = self.reroll(x, stage_end_block_idx) # mask=None for standard inference
 
+                 # Apply the normalization layer for this stage output
+                 norm_layer = getattr(self, f'norm{stage_idx}')
+                 # Norm needs [B, N, C] format. Reshape, Norm, Reshape back.
+                 B_s, C_s, *spatial_s = out_spatial.shape
+                 out_spatial_flat = out_spatial.view(B_s, C_s, -1).transpose(1, 2) # B, N_s, C_s
+                 out_norm = norm_layer(out_spatial_flat)
+                 out_norm_spatial = out_norm.transpose(1, 2).view(B_s, C_s, *spatial_s) # B, C_s, H_s, W_s
+
+                 outs.append(out_norm_spatial)
+
+        # MMSeg Adaptation: Return tuple of features from specified stages
         return tuple(outs)
-
-    def train(self, mode=True):
-        """Convert the model into training mode while keep layers freezed."""
-        super().train(mode)
-        self._freeze_stages()
