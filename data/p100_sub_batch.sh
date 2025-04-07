@@ -2,17 +2,17 @@
 
 #SBATCH --job-name=sam2
 #SBATCH --account=nn10004k
-#SBATCH --output=output_adamW_focalloss_ORCNET.txt           # Standard output file
-#SBATCH --error=error.txt             # Standard error file
-#SBATCH --partition=accel #accel #normal  a100   # Partition or queue name
+#SBATCH --output=5000_output_sam2.1_small.txt           # Standard output file
+#SBATCH --error=error_sam2.txt             # Standard error file
+#SBATCH --partition=a100 #accel #normal  a100   # Partition or queue name
 #SBATCH --nodes=1                     # Number of nodes
 #SBATCH --ntasks-per-node=1           # Number of tasks per node
-#SBATCH --cpus-per-task=5 # Number of CPU cores per task
+#SBATCH --cpus-per-task=10 # Number of CPU cores per task
 #SBATCH --time=15:15:00               # Maximum runtime (D-HH:MM:SS)
 #SBATCH --mem-per-cpu=5G
 
-##SBATCH --gres=gpu:a100:1 
-#SBATCH --gres=gpu:p100:1
+#SBATCH --gres=gpu:a100:1 
+##SBATCH --gres=gpu:p100:1
 ##SBATCH --qos=devel  # for test only 
 
 # grep -A 5 "Class  |  IoU  |  Acc" 

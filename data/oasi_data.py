@@ -1,8 +1,8 @@
 
 
-# import mmseg
-# import mmcv
-# import mmengine
+import mmseg
+import mmcv
+import mmengine
 import argparse
 from mmengine.runner import Runner
 from mmseg.registry import DATASETS
@@ -79,18 +79,19 @@ def main():
 
     # split train/val set randomly
     # split_dir = 'splits'
+    # train_portion = 0.8
     # mmengine.mkdir_or_exist(osp.join(data_root, split_dir))
     # filename_list = [osp.splitext(filename)[0] for filename in mmengine.scandir(
-    #     osp.join(data_root, ann_dir), suffix='.png')]
+    #     osp.join(data_root, img_dir), suffix='.png')]
     # with open(osp.join(data_root, split_dir, 'train.txt'), 'w') as f:
     #   # select first 4/5 as train set
-    #   train_length = int(len(filename_list)*4/5)
+    #   train_length = int(len(filename_list)*train_portion)
     #   f.writelines(line + '\n' for line in filename_list[:train_length])
     # with open(osp.join(data_root, split_dir, 'val.txt'), 'w') as f:
     #   # select last 1/5 as train set
     #   f.writelines(line + '\n' for line in filename_list[train_length:])
 
-    # define dataset
+    # # define dataset
     # @DATASETS.register_module()
     # class SeaObjectDataset(BaseSegDataset):
     #     METAINFO = dict(classes = classes)
@@ -105,11 +106,11 @@ def main():
     #     # Add other required parameters
     # ))
     # cfg = Config.fromfile(osp.join(mmseg_code_root, 'bisenetv1/bisenetv1_r50-d32_4xb4-160k_cityscapes-1024x1024.py'))
-    cfg = Config.fromfile('/cluster/home/snf52395/mmsegmentation/data/hiera-sam2-baseplus_OCRNet_SeaObject-1024x1024.py')
+    cfg = Config.fromfile('/cluster/home/snf52395/mmsegmentation/data/hiera-sam2-base+_SegSegformer_SeaObject-1024x1024.py')
     # print(f'Config:\n{cfg.pretty_text}')
 
-    cfg.norm_cfg = dict(type='BN', requires_grad=True)
-    cfg.crop_size = (1024, 1024)
+    # cfg.norm_cfg = dict(type='BN', requires_grad=True)
+    # cfg.crop_size = (1024, 1024)
     # cfg.model.data_preprocessor.size = cfg.crop_size
     # cfg.model.backbone.norm_cfg = cfg.norm_cfg
     # cfg.model.decode_head.norm_cfg = cfg.norm_cfg
@@ -123,8 +124,12 @@ def main():
     cfg.dataset_type = 'SeaObjectDataset'
     cfg.data_root = data_root
 
-    cfg.train_dataloader.batch_size = 2 # 15 for a100
+    cfg.train_dataloader.batch_size = 8 # 56 for a100 sam2.1 small
+    cfg.val_dataloader.batch_size = 8
+    cfg.test_dataloader.batch_size = 8
 
+    cfg.num_workers=4
+    
     # cfg.train_pipeline = [
     #     dict(type='LoadImageFromFile'),
     #     dict(type='LoadAnnotations'),
@@ -176,10 +181,10 @@ def main():
 
     # Set up working dir to save files and logs.
     cfg.work_dir = work_dir
-    cfg.train_cfg.max_iters = 50 # max iterations X
-    cfg.train_cfg.val_interval = 50 # per X iterations validate the model
-    cfg.default_hooks.logger.interval = 1
-    cfg.default_hooks.checkpoint.interval = 50
+    cfg.train_cfg.max_iters = 20000 # max iterations X
+    cfg.train_cfg.val_interval = 200 # per X iterations validate the model
+    cfg.default_hooks.logger.interval = 50
+    cfg.default_hooks.checkpoint.interval = 10000
 
     # Set seed to facilitate reproducing the result
     cfg['randomness'] = dict(seed=0)
