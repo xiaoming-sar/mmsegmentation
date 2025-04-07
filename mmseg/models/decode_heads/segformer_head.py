@@ -48,6 +48,13 @@ class SegformerHead(BaseDecodeHead):
     def forward(self, inputs):
         # Receive 4 stage backbone feature map: 1/4, 1/8, 1/16, 1/32
         inputs = self._transform_inputs(inputs)
+        #print the shapes of inputs features, these features have varied dimensions 
+        # for i in inputs:
+        #     print(i.shape)
+            # torch.Size([1, 144, 144, 144])
+            # torch.Size([1, 288, 72, 72])
+            # torch.Size([1, 576, 36, 36])
+            # torch.Size([1, 1152, 18, 18])
         outs = []
         for idx in range(len(inputs)):
             x = inputs[idx]
