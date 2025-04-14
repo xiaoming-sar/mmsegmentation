@@ -1,9 +1,9 @@
 
 
-import mmseg
-import mmcv
-import mmengine
-import argparse
+# import mmseg
+# import mmcv
+# import mmengine
+# # import argparse
 from mmengine.runner import Runner
 from mmseg.registry import DATASETS
 from mmseg.datasets import BaseSegDataset
@@ -42,12 +42,10 @@ def main():
     100 - land 4%
     150 - sea obj 4%
     """
-    img_dir = 'image'
-    ann_dir = 'mask'
+    # img_dir = 'image'
+    # ann_dir = 'mask'
 
 
-    # classes = ('Sky', 'Sea', 'Land', 'SeaObj')
-    # palette = [[0, 0, 0], [50, 50, 50], [100, 100, 100], [150, 150, 150]]
     # import os
     # from PIL import Image
     # mask_files = os.listdir(osp.join(data_root, ann_dir))
@@ -65,7 +63,7 @@ def main():
     #     mask.save(osp.join(data_root, ann_dir, mask_file[:-4] + '_.png'))
 
     
-    # import matplotlib.patches as mpatches
+    # # import matplotlib.patches as mpatches
     # img1 = Image.open(osp.join(data_root, ann_dir, 'type2_000_1.png'))
     # plt.figure(figsize=(8, 6))
     # im = plt.imshow(np.array(img.convert('RGB')))
@@ -106,7 +104,7 @@ def main():
     #     # Add other required parameters
     # ))
     # cfg = Config.fromfile(osp.join(mmseg_code_root, 'bisenetv1/bisenetv1_r50-d32_4xb4-160k_cityscapes-1024x1024.py'))
-    cfg = Config.fromfile('/cluster/home/snf52395/mmsegmentation/data/hiera-sam2-base+_SegSegformer_SeaObject-1024x1024.py')
+    cfg = Config.fromfile('/cluster/home/snf52395/mmsegmentation/data/hiera-sam2-small_SegSegformer_SeaObject-1024x1024.py')
     # print(f'Config:\n{cfg.pretty_text}')
 
     # cfg.norm_cfg = dict(type='BN', requires_grad=True)
@@ -124,7 +122,7 @@ def main():
     cfg.dataset_type = 'SeaObjectDataset'
     cfg.data_root = data_root
 
-    cfg.train_dataloader.batch_size = 8 # 56 for a100 sam2.1 small
+    cfg.train_dataloader.batch_size = 56 # 56 for a100 sam2.1 small, 8 for p100
     cfg.val_dataloader.batch_size = 8
     cfg.test_dataloader.batch_size = 8
 
