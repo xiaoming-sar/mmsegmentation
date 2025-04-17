@@ -135,7 +135,7 @@ randomness = dict(seed=0)
 resume = False
 test_cfg = dict(type='TestLoop')
 test_dataloader = dict(
-    batch_size=56,
+    batch_size=1,
     dataset=dict(
         ann_file='splits/val.txt',
         data_prefix=dict(img_path='image', seg_map_path='mask'),
@@ -144,14 +144,14 @@ test_dataloader = dict(
         pipeline=[
             dict(type='LoadImageFromFile'),
             dict(keep_ratio=True, scale=(
-                1024,
-                1024,
+                1008,
+                1008,
             ), type='Resize'),
             dict(type='LoadAnnotations'),
             dict(type='PackSegInputs'),
         ],
         type='SeaObjectDataset'),
-    num_workers=8,
+    num_workers=1,
     persistent_workers=True,
     sampler=dict(shuffle=False, type='DefaultSampler'))
 test_evaluator = dict(
@@ -163,8 +163,8 @@ test_evaluator = dict(
 test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(keep_ratio=True, scale=(
-        1024,
-        1024,
+        1008,
+        1008,
     ), type='Resize'),
     dict(type='LoadAnnotations'),
     dict(type='PackSegInputs'),

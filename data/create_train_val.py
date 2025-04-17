@@ -144,7 +144,7 @@ def combine_splits(base_dir, subdirectories_list, final_output_dir,
         try:
             with open(current_train_file, 'r') as f:
                 # Read, strip, filter empty, and prepend subdir name
-                names = [f"{subdir_name}/{line.strip()}" for line in f if line.strip()]
+                names = [f"{line.strip()}" for line in f if line.strip()]
                 all_train_names.extend(names)
                 print(f"  Added {len(names)} entries from {train_filename}")
         except FileNotFoundError:
@@ -156,7 +156,7 @@ def combine_splits(base_dir, subdirectories_list, final_output_dir,
         try:
             with open(current_val_file, 'r') as f:
                 # Read, strip, filter empty, and prepend subdir name
-                names = [f"{subdir_name}/{line.strip()}" for line in f if line.strip()]
+                names = [f"{line.strip()}" for line in f if line.strip()]
                 all_val_names.extend(names)
                 print(f"  Added {len(names)} entries from {val_filename}")
         except FileNotFoundError:
