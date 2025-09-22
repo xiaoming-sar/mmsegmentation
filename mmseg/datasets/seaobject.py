@@ -1,8 +1,9 @@
 from mmseg.registry import DATASETS
 from .basesegdataset import BaseSegDataset
+
 """
 SeaObjectDataset is a subclass of BaseSegDataset
-can be created using from orignial dataset 
+can be created from orignial dataset 
     # import os
     # from PIL import Image
     # mask_files = os.listdir(osp.join(data_root, ann_dir))
