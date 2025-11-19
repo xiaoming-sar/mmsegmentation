@@ -1,14 +1,11 @@
 import json
+import os
 from collections import defaultdict
 import pandas as pd
 from pathlib import Path 
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import matplotlib.ticker as ticker
 
-
-import matplotlib as mpl
 import matplotlib.font_manager as fm
 font_dirs = ['/cluster/home/snf52395/mmsegmentation']
 font_files = fm.findSystemFonts(fontpaths=font_dirs, fontext='ttf')
@@ -84,9 +81,9 @@ def logdicts2df(log_dicts):
 
 
 # Replace with your actual log file paths
-jason_folder = '/cluster/projects/nn10004k/packages_install/seaobject_ocrnet80000/20250325_143528/'
+jason_folder = '/cluster/projects/nn10004k/packages_install/SAM2.1_tiny_OASIs_3in1_40K/20251113_104942'
 json_filename = f"{Path(jason_folder).name}.json"
-expected_json_path = jason_folder + 'vis_data/' + json_filename
+expected_json_path = jason_folder + '/vis_data/' + json_filename
 json_logs = [str(expected_json_path)]
 
 for json_log in json_logs:
@@ -94,8 +91,15 @@ for json_log in json_logs:
 
 log_dicts = load_json_logs(json_logs)
 
+path_obj = Path(jason_folder)
+project_name = path_obj.parent.name
+output_dir = Path("training_metrics")
+output_dir.mkdir(parents=True, exist_ok=True)
+
 df_metrics = logdicts2df(log_dicts)
 
+file_name = os.path.join(output_dir, f"{project_name}.csv")
+df_metrics.to_csv(file_name, index=False)
 
 
 sns.set_style({'font.family': 'Times New Roman','font.size': 10})
@@ -111,8 +115,8 @@ ax.tick_params(top=True, right=True)
 ax.tick_params(direction='in', which='both', top=True, right=True, bottom=True, left=True)
 plt.tight_layout(pad=0.5) # Adjust padding if necessary
 
-plt.show()
-output_filename = "loss_ocrnet_80000_4GPU.png"
+# plt.show()
+output_filename =  os.path.join(output_dir, f"loss_{project_name}.png")
 fig.savefig(output_filename, dpi=600, bbox_inches='tight')
 plt.close()
 #============= plot 'mIoU','mDice','mFscore', 'mPrecision', 'mRecall'
@@ -142,8 +146,8 @@ ax.legend(handles, labels, title='',  loc='lower right', frameon=False)
 
 plt.tight_layout(pad=0.5) # Adjust padding if necessary
 
-plt.show()
-output_filename = "vali_ocrnet_80000_4GPU.png"
+# plt.show()
+output_filename =  os.path.join(output_dir,f"vali_{project_name}.png")
 fig.savefig(output_filename, dpi=600, bbox_inches='tight')
 plt.close()
 
