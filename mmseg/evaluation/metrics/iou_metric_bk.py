@@ -23,7 +23,7 @@ class IoUMetric(BaseMetric):
         ignore_index (int): Index that will be ignored in evaluation.
             Default: 255.
         iou_metrics (list[str] | str): Metrics to be calculated, the options
-            includes 'mIoU', 'mDice', 'mFscore', and 'mFwIoU'.
+            includes 'mIoU', 'mDice' and 'mFscore'.
         nan_to_num (int, optional): If specified, NaN values will be replaced
             by the numbers defined by the user. Default: None.
         beta (int): Determines the weight of recall in the combined score.
@@ -109,7 +109,7 @@ class IoUMetric(BaseMetric):
             Dict[str, float]: The computed metrics. The keys are the names of
                 the metrics, and the values are corresponding results. The key
                 mainly includes aAcc, mIoU, mAcc, mDice, mFscore, mPrecision,
-                mRecall, mFwIoU.
+                mRecall.
         """
         logger: MMLogger = MMLogger.get_current_instance()
         if self.format_only:
@@ -217,8 +217,8 @@ class IoUMetric(BaseMetric):
                 all classes.
             total_area_label (np.ndarray): The ground truth histogram on
                 all classes.
-            metrics (List[str] | str): Metrics to be evaluated, 'mIoU', 'mDice',
-                'mFscore', and 'mFwIoU'.
+            metrics (List[str] | str): Metrics to be evaluated, 'mIoU' and
+                'mDice'.
             nan_to_num (int, optional): If specified, NaN values will be
                 replaced by the numbers defined by the user. Default: None.
             beta (int): Determines the weight of recall in the combined score.
@@ -246,13 +246,12 @@ class IoUMetric(BaseMetric):
 
         if isinstance(metrics, str):
             metrics = [metrics]
-        allowed_metrics = ['mIoU', 'mDice', 'mFscore', 'mFwIoU']
+        allowed_metrics = ['mIoU', 'mDice', 'mFscore']
         if not set(metrics).issubset(set(allowed_metrics)):
             raise KeyError(f'metrics {metrics} is not supported')
 
         all_acc = total_area_intersect.sum() / total_area_label.sum()
         ret_metrics = OrderedDict({'aAcc': all_acc})
-        num_classes = total_area_label.shape[0]
         for metric in metrics:
             if metric == 'mIoU':
                 iou = total_area_intersect / total_area_union
@@ -274,34 +273,7 @@ class IoUMetric(BaseMetric):
                 ret_metrics['Fscore'] = f_value
                 ret_metrics['Precision'] = precision
                 ret_metrics['Recall'] = recall
-            elif metric == 'mFwIoU':
-                # adapted from  
-                # Corresponds to: (t_i * n_ii) / (t_i + n_ij - n_ii)
-                # Where:
-                # n_ii is total_area_intersect (intersection of prediction and ground truth)
-                # t_i is total_area_label (ground truth histogram)
-                # n_ij is total_area_pred_label (prediction histogram)
 
-                # Calculate the per-class IU first
-                # Handle potential division by zero for union if a class has no union
-                # For example, if total_area_union[i] is 0, iou_per_class[i] would be nan
-                # The later np.nan_to_num will handle this.
-                iou_per_class = total_area_intersect / total_area_union
-
-                # Apply the weighting (t_i * IU_i)
-                weighted_iou_per_class = total_area_label * iou_per_class
-
-                # Sum over all classes and divide by total pixel area (sum_k(t_k))
-                # total_area_label.sum() represents sum_k(t_k)
-                # Handle potential division by zero if total_area_label.sum() is 0
-                # In most practical segmentation scenarios, total_area_label.sum() will be > 0
-                if total_area_label.sum() == 0:
-                    fw_iou = torch.tensor(0.0) # Or nan, depending on desired behavior
-                else:
-                    fw_iou = weighted_iou_per_class.sum() / total_area_label.sum()
-                
-                # ret_metrics['FwIoU'] = torch.tensor([fw_iou]) # Store as a tensor for consistency
-                ret_metrics['FwIoU'] = torch.full((num_classes,), fw_iou)
         ret_metrics = {
             metric: value.numpy()
             for metric, value in ret_metrics.items()
@@ -312,4 +284,3 @@ class IoUMetric(BaseMetric):
                 for metric, metric_value in ret_metrics.items()
             })
         return ret_metrics
-
